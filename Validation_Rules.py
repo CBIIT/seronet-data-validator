@@ -5,6 +5,7 @@ def Validation_Rules(re,datetime,current_object,data_table,file_name,valid_cbc_i
         data_table.drop_duplicates(col_list,inplace = True)
     data_table.reset_index(inplace = True)
     data_table.drop(columns = "index", inplace = True)
+    data_table = data_table.apply(lambda x: x.replace('–','-'))
 
     min_date = datetime.date(1900, 1, 1)
     max_date = datetime.date.today()
@@ -31,6 +32,9 @@ def Validation_Rules(re,datetime,current_object,data_table,file_name,valid_cbc_i
            current_object.compare_total_to_live(file_name,data_table,header_name)
         if (header_name in ['Viability_Hemocytometer_Count', 'Viability_Automated_Count']):
            current_object.compare_viability(file_name,data_table,header_name)
+        if (header_name in ["Comments"]):       #must be a non-empty string, N/A is allowed if no comments
+            Required_column = "Yes"
+            current_object.check_if_string(file_name,data_table,header_name,"None","None",True)
         if True not in Rule_Found:
             print("Column_Name: " + header_name + " has no validation rules set")
         else:
@@ -40,21 +44,72 @@ def Validation_Rules(re,datetime,current_object,data_table,file_name,valid_cbc_i
         current_object.Part_List.append(file_name)
     if ('Biospecimen_ID' in data_table.columns) and ('Biospecimen_ID' not in drop_list):
         current_object.Bio_List.append(file_name)
+              
     return current_object
+def compare_tests(current_object):
+    file_list = current_object.Part_List      #list of files with Research Part ID
+    if ("prior_clinical_test.csv" in file_list) and ("confirmatory_clinical_test.csv" in file_list):
+        prior_data = current_object.Data_Object_Table["prior_clinical_test.csv"]["Data_Table"]
+        confirm_data = current_object.Data_Object_Table["confirmatory_clinical_test.csv"]["Data_Table"] 
+        assay_data = current_object.Data_Object_Table["assay.csv"]["Data_Table"] 
+        merged_data = prior_data.merge(confirm_data, on = "Research_Participant_ID", how = "outer")
+        merged_data = merged_data.merge(assay_data, on = "Assay_ID", how = "left")
+        
+        merged_data = merged_data[["Research_Participant_ID","SARS_CoV_2_PCR_Test_Result","Target_Organism","Interpretation"]]
+        
+        part_list = list(set(merged_data["Research_Participant_ID"].tolist()))
+        target_virus = "SARS-CoV-2 Virus"
+        header = "Research_Participant_ID"
+        for iterP in part_list:
+            curr_part = merged_data.query("Research_Participant_ID == @iterP and Target_Organism == @target_virus")
+            if len(curr_part) == 0:     #SARS_Cov-2 confirm test is missing
+                error_msg = "Participant is Missing SARS_Cov-2 Confirmatory Test"
+                curr_part = merged_data.query("Research_Participant_ID == @iterP")
+                try:
+                    current_object.add_error_values("Error","confirmatory_clinical_test.csv",-5,header,curr_part.iloc[0][header],error_msg)
+                except Exception as e:
+                    print(e)
+            else:
+                test_res,neg_count = get_curr_tests(curr_part,"Negative",target_virus)
+                if (len(neg_count) > 0) and (test_res[0] != len(neg_count)):
+                    error_msg = "Participant has a prior test of SARS-Cov2: Negative, but has one or more SARS_Cov2 Confimatory Tests that are Positive/Reactive or Indetertimate"
+                    current_object.add_error_values("Error","Prior_Vs_Confirm_Test.csv",-5,header,curr_part.iloc[0][header],error_msg)
+                    
+                test_res,pos_count = get_curr_tests(curr_part,"Positive",target_virus)
+                if (len(pos_count) > 0) and (test_res[1] == 0):
+                    error_msg = "Participant has a prior test of SARS-Cov2: Positive, but all SARS_Cov2 Confimatory Tests are Negative/Non-Reactive or Indetertimate"
+                    current_object.add_error_values("Error","Prior_Vs_Confirm_Test.csv",-5,header,curr_part.iloc[0][header],error_msg)
+def get_curr_tests(curr_part,prior_stat,target_virus):
+    part_test = curr_part[curr_part.apply(lambda x : (x['SARS_CoV_2_PCR_Test_Result'] == prior_stat) and 
+                                         (x["Target_Organism"] == target_virus),axis = 1)]["Interpretation"]
+    lower_list = [i.lower() for i in part_test.tolist()]
+    neg_count = 0
+    pos_count = 0
+    inc_count = 0
+    for iterZ in lower_list:
+        if  (("negative" in iterZ) or 
+            (("no" in iterZ) and ("reaction" in iterZ)) or
+            (("non" in iterZ) and ("reactive" in iterZ))):
+            neg_count = neg_count + 1
+        elif (("positive" in iterZ) or 
+             (("no" not in iterZ) and ("reaction" in iterZ)) or
+             (("non" not in iterZ) and ("reactive" in iterZ))):
+             pos_count = pos_count + 1
+        else:
+            inc_count = inc_count + 1
+    part_count = curr_part.query("SARS_CoV_2_PCR_Test_Result == @prior_stat")
+    return (neg_count,pos_count,inc_count),part_count
 def check_ID_Cross_Sheet(current_object,re):
     current_object.get_all_unique_ids(re)
     current_object.get_passing_part_ids()
     
-#    current_object.get_cross_sheet_Participant_ID(re,'Research_Participant_ID')
-#    current_object.get_cross_sheet_Biospecimen_ID(re,'Biospecimen_ID')
-
-
-            
+    current_object.get_cross_sheet_ID(re,'Research_Participant_ID','[_]{1}[0-9]{6}$',"Cross_Participant_ID.csv")
+    current_object.get_cross_sheet_ID(re,'Biospecimen_ID','[_]{1}[0-9]{6}[_]{1}[0-9]{3}$',"Cross_Biospecimen_ID.csv")
 def check_ID_validation(header_name,current_object,file_name,data_table,re,valid_cbc_ids,Rule_Found,index,Required_column = "Yes"):
     if header_name in ['Research_Participant_ID']:
         pattern_str = '[_]{1}[0-9]{6}$'
         current_object.check_id_field(file_name,data_table,re,header_name,pattern_str,valid_cbc_ids,"XX_XXXXXX")
-        if (file_name not in ["biospecimen.csv"]):
+        if (file_name not in ["biospecimen.csv","confirmatory_clinical_test.csv"]):
             current_object.check_for_dup_ids(file_name,header_name)
     elif (header_name in ["Biospecimen_ID"]):
         pattern_str = '[_]{1}[0-9]{6}[_]{1}[0-9]{3}$'
@@ -116,7 +171,7 @@ def check_prior_clinical(header_name,current_object,data_table,file_name,datetim
             current_name = current_name.replace('Duration_of','Current')
         
         current_object.check_in_list(file_name,data_table,header_name,current_name,['No','Unknown','N/A'],["N/A"])
-        current_object.check_if_number(file_name,data_table,header_name,current_name,['Yes'],False,0,365,"int")
+        current_object.check_if_number(file_name,data_table,header_name,current_name,['Yes'],True,0,365,"int")
     elif (('Current' in header_name) and ('infection' in header_name)) or (header_name in ["On_HAART_Therapy"]):
         Required_column = "Yes: SARS-Negative"            
         current_object.check_in_list(file_name,data_table,header_name,'SARS_CoV_2_PCR_Test_Result',["Positive"],['Yes','No','Unknown','N/A'])
@@ -196,7 +251,8 @@ def check_biospecimen(header_name,current_object,data_table,file_name,datetime,m
     elif(header_name in ["Storage_Start_Time_at_2_8","Storage_End_Time_at_2_8"]):
          current_object.check_date(datetime,file_name,data_table,header_name,"Storage_Time_at_2_8","Is A Number",False,"Date",min_date,max_date)
          current_object.check_in_list(file_name,data_table,header_name,"Storage_Time_at_2_8",["N/A"],['N/A'])
-    elif(header_name in ["Final_Concentration_of_Biospecimen"]) or (header_name.find('Hemocytometer_Count') > -1) or (header_name.find('Automated_Count') > -1):
+    # ["Final_Concentration_of_Biospecimen"] field has been dropped from csv file
+    elif(header_name.find('Hemocytometer_Count') > -1) or (header_name.find('Automated_Count') > -1):
         current_object.check_if_number(file_name,data_table,header_name,"Biospecimen_Type",["PBMC"],True,0,1e9,"float")
     elif(header_name in ["Centrifugation_Time","RT_Serum_Clotting_Time"]):
         current_object.check_if_number(file_name,data_table,header_name,"Biospecimen_Type",["Serum"],True,0,1e9,"float")
@@ -208,6 +264,9 @@ def check_biospecimen(header_name,current_object,data_table,file_name,datetime,m
 def check_processing_rules(header_name,current_object,data_table,file_name,datetime,min_date,max_date,Rule_Found,index,Required_column = "Yes"):
     if (header_name in ["Aliquot_Volume"]):
         current_object.check_if_number(file_name,data_table,header_name,"None","None",True,0,1e9,"float")
+    elif (header_name in ["Aliquot_Concentration"]):
+        current_object.check_if_number(file_name,data_table,header_name,"Biospecimen_Type",["PBMC"],True,0,1e9,"float")        
+        current_object.check_in_list(file_name,data_table,header_name,"Biospecimen_Type", ["Serum", "EDTA Plasma", "Saliva", "Nasal swab"],["N/A"])
     elif ('Expiration_Date' in header_name) or ('Calibration_Due_Date' in header_name):
          Required_column = "No"
          current_object.check_date(datetime,file_name,data_table,header_name,"None","None",False,"Date",max_date,datetime.date(3000, 1, 1)) 
@@ -237,8 +296,11 @@ def check_confimation_rules(header_name,current_object,data_table,file_name,date
         current_object.check_date(datetime,file_name,data_table,header_name,"None","None",False,"Date",min_date,max_date)  
     elif 'Time_of' in header_name:
         current_object.check_date(datetime,file_name,data_table,header_name,"None","None",False,"Time")
-    elif (header_name in ["Assay_Target_Sub_Region","Measurand_Antibody","Interpretation"]):
-        current_object.check_if_string(file_name,data_table,header_name,"None","None",False)
+    elif (header_name in ["Assay_Target_Sub_Region","Measurand_Antibody"]):
+        current_object.check_if_string(file_name,data_table,header_name,"None","None",True)
+    elif (header_name in ["Interpretation"]):
+        list_values = ['positive','negative','reactive','reaction']
+        current_object.check_interpertation(file_name,data_table,header_name,list_values)
     elif (header_name in ["Assay_Replicate","Sample_Dilution"]):
         current_object.check_if_number(file_name,data_table,header_name,"None","None",False,0,200,"int")
     elif (header_name in ["Derived_Result","Raw_Result","Positive_Control_Reading","Negative_Control_Reading"]):

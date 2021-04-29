@@ -1,7 +1,6 @@
 import icd10
 import pandas as pd
 from dateutil.parser import parse
-from termcolor import colored
 ######################################################################################################################
 def clean_up_column_names(header_name):
     header_name = header_name.replace(" (cells/mL)","")
@@ -53,19 +52,59 @@ class Submission_Object:
         self.Error_list = pd.DataFrame(columns = ["Message_Type","CSV_Sheet_Name","Row_Index","Column_Name","Column_Value","Error_Message"])
 ######################################################################################################################
     def get_data_tables(self,file_name,file_path):
-        self.Data_Object_Table[file_name] = {"Data_Table":[],"Column_List":[]}
-        Data_Table = pd.read_csv(file_path,na_filter=False)
+        self.Data_Object_Table[file_name] = {"Data_Table":[],"Column_List":[],"Key_Cols":[]}
+        try:   
+            Data_Table = pd.read_csv(file_path,na_filter=False)
+        except Exception:      #if table is empty (EmptyDataError)
+            Data_Table = pd.DataFrame()
         self.Data_Object_Table[file_name]["Data_Table"].append(Data_Table)
+        self.set_key_cols(file_name)
         if file_name not in ["submission.csv","shipping_manifest.csv"]:
             self.cleanup_table(file_name)
+    def set_key_cols(self,file_name):
+        if file_name == "prior_clinical_test.csv":
+            col_list = ["Research_Participant_ID","SARS_CoV_2_PCR_Test_Result"]
+        elif file_name == "demographic.csv":
+            col_list = ["Research_Participant_ID","Age"]
+        elif file_name == "biospecimen.csv":
+            col_list = ["Research_Participant_ID","Biospecimen_ID","Biospecimen_Type"]
+        elif file_name == "confirmatory_clinical_test.csv":
+            col_list = ["Research_Participant_ID","Assay_ID","Assay_Target"]
+        elif file_name == "aliquot.csv":
+            col_list = ["Biospecimen_ID","Aliquot_ID"]
+        elif file_name == "equipment.csv":
+            col_list = ["Biospecimen_ID","Equipment_ID"]
+        elif file_name == "reagent.csv":
+            col_list = ["Biospecimen_ID","Reagent_Name"]
+        elif file_name == "consumable.csv":
+            col_list = ["Biospecimen_ID","Consumable_Name"]
+        elif file_name == "assay.csv":
+            col_list = ["Assay_ID","Assay_Name"]
+        elif file_name == "assay_target.csv":
+            col_list = ["Assay_ID","Assay_Target"]
+        else:
+            col_list = []
+        self.Data_Object_Table[file_name]["Key_Cols"] = col_list
+    def update_object(self,assay_df,file_name):
+        Data_Table = assay_df
+        self.Data_Object_Table[file_name] = {"Data_Table":[],"Column_List":[],"Key_Cols":[]}
+        self.Data_Object_Table[file_name]["Data_Table"].append(Data_Table)
+        if isinstance(self.Data_Object_Table[file_name]["Data_Table"],list):
+            self.Data_Object_Table[file_name]["Data_Table"] = self.Data_Object_Table[file_name]["Data_Table"][0]
+        self.set_key_cols(file_name)
 ######################################################################################################################
-    def cleanup_table(self,file_name):          
+    def cleanup_table(self,file_name):     
         curr_table = self.Data_Object_Table[file_name]["Data_Table"][0]
         curr_table.dropna(axis=0, how="all", thresh=None, subset=None, inplace=True)        #if a row is completely blank remove it
-        missing_logic = curr_table.eq(curr_table.iloc[:, 0], axis=0).all(axis=1)
-        curr_table = curr_table[[i is not True for i in missing_logic]]
-        
-        curr_table = curr_table .loc[:,~ curr_table .columns.str.startswith('Unnamed')]     #if a column is completely blank, remove it
+        if len(curr_table) > 0:
+            missing_logic = curr_table.eq(curr_table.iloc[:, 0], axis=0).all(axis=1)
+            curr_table = curr_table[[i is not True for i in missing_logic]]      
+            curr_table = curr_table .loc[:,~ curr_table .columns.str.startswith('Unnamed')]     #if a column is completely blank, remove it
+            for iterC in curr_table.columns:
+                try:
+                    curr_table[iterC] = curr_table[iterC].apply(lambda x: x.replace('–','-'))
+                except Exception:       #only apply to strings, dates and numbers will error
+                    pass
         self.Data_Object_Table[file_name]["File_Size"] = len(curr_table)                            #number of rows in the file
         self.Data_Object_Table[file_name]["Data_Table"] = curr_table
 ##########################################################################################################################
@@ -79,7 +118,7 @@ class Submission_Object:
         
         if len(check_file) == 0:            #file was not included, nothing to check for
             return
-        check_file = pd.read_excel(check_file[0])
+        check_file = pd.read_excel(check_file[0], engine = 'openpyxl')
         col_list = check_file.columns.tolist()
         col_list = [clean_up_column_names(i) for i in col_list]
         
@@ -104,7 +143,7 @@ class Submission_Object:
             try:
                 submit_table = self.Data_Object_Table['submission.csv']['Data_Table'][0]
                 id_list =  [i for i in Support_Files if "SeroNet_Org_IDs.xlsx" in i]
-                id_conv = pd.read_excel(id_list[0])
+                id_conv = pd.read_excel(id_list[0], engine = 'openpyxl')
                 submit_name = submit_table.columns.values[1]
                 
                 self.CBC_ID = id_conv.query("Institution == @submit_name")["Org ID"].tolist()[0]
@@ -150,7 +189,10 @@ class Submission_Object:
         return data_table,drop_list
     def check_merge(self,data_table,table_name,merge_field):
         if table_name in self.Data_Object_Table:
-            data_table = data_table.merge(self.Data_Object_Table[table_name]["Data_Table"],how='left',on=merge_field)
+            try:
+                data_table = data_table.merge(self.Data_Object_Table[table_name]["Data_Table"],how='left',on=merge_field)
+            except Exception:
+                data_table = data_table.merge(self.Data_Object_Table[table_name]["Data_Table"][0],how='left',on=merge_field)               
         return data_table
 ##########################################################################################################################
     def add_error_values(self,msg_type,sheet_name,row_index,col_name,col_value,error_msg):
@@ -223,6 +265,17 @@ class Submission_Object:
         error_data = data_table.loc[row_index]
         
         self.update_error_table("Error",error_data,sheet_name,header_name,error_msg)
+    def check_interpertation(self,sheet_name,data_table,header_name,list_values):
+        error_msg = "Value must contain of the following options: " + str(list_values)
+        curr_data = data_table[header_name]
+        row_index = []
+        
+        for iterC in curr_data.index:
+            logic_list = [i for i in list_values if i in curr_data[iterC].lower()]
+            if len(logic_list) == 0:        #no values matched
+                row_index.append(iterC)
+        error_data = data_table.loc[row_index]        
+        self.update_error_table("Error",error_data,sheet_name,header_name,error_msg)        
 ##########################################################################################################################
     def check_date(self,datetime,sheet_name,data_table,header_name,depend_col,depend_val,na_allowed,time_check,lower_lim = 0,upper_lim = 24):
         data_table,error_str = self.check_for_dependancy(data_table,depend_col,depend_val,sheet_name,header_name)
@@ -284,6 +337,7 @@ class Submission_Object:
              self.update_error_table("Error",good_data[is_float],sheet_name,header_name,error_msg)
         if na_allowed == True:
              good_logic = data_table[header_name].apply(lambda x: isinstance(x,(int,float)) or x in ['N/A',''])
+             error_msg = error_str + " Or N/A"
              
         error_data = data_table[[not x for x in good_logic]]
         self.update_error_table("Error",error_data,sheet_name,header_name,error_msg)
@@ -389,6 +443,10 @@ class Submission_Object:
 
         self.All_part_ids  = [i for i in self.All_part_ids if (re.compile('^' + str(self.CBC_ID) + '[_]{1}[0-9]{6}$').match(i) is not None)]
         self.All_bio_ids  = [i for i in self.All_bio_ids if (re.compile('^' + str(self.CBC_ID) + '[_]{1}[0-9]{6}[_]{1}[0-9]{3}$').match(i) is not None)]
+        
+        self.All_part_ids = pd.DataFrame(self.All_part_ids,columns = ["Research_Participant_ID"])
+        self.All_bio_ids = pd.DataFrame(self.All_bio_ids,columns = ["Biospecimen_ID"])
+                
     def get_passing_part_ids(self):
         if (int(self.Submit_Participant_IDs) != len(self.All_part_ids)):
             error_msg = "After validation only " + str(len(self.All_part_ids)) + " Participat IDS are valid"
@@ -396,79 +454,93 @@ class Submission_Object:
         elif (int(self.Submit_Biospecimen_IDs) != len(self.All_bio_ids)):
             error_msg = "After validation only " + str(len(self.All_bio_ids)) + " Biospecimen IDS are valid"
             self.add_error_values("Error","submission.csv",-5,"submit_Biospecimen_IDs",self.Submit_Biospecimen_IDs,error_msg)     
+
+    def make_error_queries(self,all_merge,field_name):
+        if field_name == "Biospecimen":
+            col_name = "Biospecimen_ID"
+        if field_name == "Demographic":
+            col_name = "Age"
+        if field_name == "Confimatory_Clinical_Test":
+            col_name = "Assay_ID"
+        error_msg = "Participant is SARS_Cov2 Negative, however missing " + field_name +" Data"
+        self.part_ids_errors(all_merge,error_msg,"{0} != {0} and SARS_CoV_2_PCR_Test_Result == 'Negative'",col_name)
+        error_msg = "Participant is SARS_Cov2 Positive, however missing " + field_name +" Data"
+        self.part_ids_errors(all_merge,error_msg,"{0} != {0} and SARS_CoV_2_PCR_Test_Result == 'Positive'",col_name)
+        error_msg = "Participant has " + field_name +" Data, however has missing/unknown SARS_Cov2 test"
+        self.part_ids_errors(all_merge,error_msg,"{0} == {0} and SARS_CoV_2_PCR_Test_Result not in ['Positive','Negative']",col_name)
+
+    def part_ids_errors(self,all_merge,error_msg,querry_str,test_field):
+        error_data = all_merge.query(querry_str.format(test_field))   
+        self.update_error_table("Error",error_data,"Cross_Participant_ID.csv","Research_Participant_ID",error_msg)
 ##########################################################################################################################
-
-
-
-    def write_cross_sheet_id_error(self,merged_data,query_str,error_msg,field_name):
-        check_id_only = merged_data.query(query_str.format("SARS_CoV_2_PCR_Test_Result","Age","Biospecimen_ID")) 
-        for iterZ in range(len(check_id_only)):
-            self.add_error_values("Error","Cross_Participant_ID.csv",-10,field_name,check_id_only.iloc[iterZ][field_name],error_msg)
-        self.sort_and_drop(field_name,True)
-##########################################################################################################################
-    def write_cross_bio_errors(self,merged_data,table_name,sheet_name):
-        error_data = merged_data.query("Biospecimen_Type != Biospecimen_Type and {0} == {0}".format(table_name))
-        error_msg = "ID is found in " + sheet_name + ", however ID is missing from Biospecimen.csv"
-        self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)          
-        if table_name in ["Aliquot_ID"]:
-            error_data = merged_data.query("Biospecimen_Type == Biospecimen_Type and {0} != {0}".format(table_name))
-            error_msg = "ID is found in Biospecimen.csv, however is missing from " + sheet_name
-            self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg) 
-        else:   
-            error_data = merged_data.query("Biospecimen_Type != 'PBMC' and Biospecimen_Type == Biospecimen_Type and {0} == {0}".format(table_name))
-            error_msg = "ID is found in " + sheet_name + ", and ID is found in Biospecimen.csv however has Biospecimen_Type NOT PBMC"
-            self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
-            error_data = merged_data.query("Biospecimen_Type == 'PBMC' and Biospecimen_Type == Biospecimen_Type and {0} != {0}".format(table_name))
-            error_msg = "ID is found in Biospecimen.csv and has Biospecimen_Type of PBMC, however ID is missing from " + sheet_name
-            self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
-    def get_submitted_ids(self,file_list,col_name,merged_data):
-        all_pass= []
-        for iterF in self.Data_Object_Table:
-            if iterF in file_list:
-                all_pass = all_pass + self.Data_Object_Table[iterF]['Data_Table'][col_name].tolist()
+    def get_cross_sheet_ID(self,re,field_name,pattern_str,sheet_name):
+        if field_name == "Biospecimen_ID":
+            file_list = self.Bio_List
+        elif field_name == "Research_Participant_ID":
+            file_list = self.Part_List
+        if len(file_list) == 0:
+            return
         
-        if len(all_pass) == 0:
-            return all_pass
-        else:
-            all_pass = pd.Series(all_pass, name = col_name)
-            merged_data.merge(all_pass,on = col_name, how = "right")
-            return merged_data
-    def get_cross_sheet_Biospecimen_ID(self,re,field_name):
-        merged_data = self.all_bio_ids[self.all_bio_ids.isna().any(axis=1)]
-        file_list = ['biospecimen.csv','aliquot.csv','equipment.csv','reagent.csv','consumable.csv']
-        merged_data = merged_data[merged_data[field_name].apply(lambda x : (re.compile('^' + self.CBC_ID + '[_]{1}[0-9]{6}[_]{1}[0-9]{3}$').match(x) is not None))]
-        merged_data  = self.get_submitted_ids(file_list,'Biospecimen_ID',merged_data)
-        if len(merged_data) > 0:
-            self.write_cross_bio_errors(merged_data,"Aliquot_ID","Aliquot.csv")
-            self.write_cross_bio_errors(merged_data,"Equipment_ID","Equipment.csv")
-            self.write_cross_bio_errors(merged_data,"Reagent_Name","Reagent.csv")
-            self.write_cross_bio_errors(merged_data,"Consumable_Name","Consumable.csv")
-    def get_cross_sheet_Participant_ID(self,re,field_name):
-        merged_data = self.all_part_ids[self.all_part_ids.isna().any(axis=1)]
-        if len(merged_data) > 0:                #if there are unmatcehd IDS then remove bad IDS and filter to submitted list
-            file_list = ['prior_clinical_test.csv','demographic.csv','biospecimen.csv','confirmatory_clinical_test.csv']
-            merged_data = merged_data[merged_data[field_name].apply(lambda x : (re.compile('^' + self.CBC_ID + '[_]{1}[0-9]{6}$').match(x) is not None))]
-            merged_data  = self.get_submitted_ids(file_list,'Research_Participant_ID',merged_data)
-        if len(merged_data) > 0:                #only checks for errors if there are IDs left after the filtering
-            error_msg = "ID is found in Prior_Clinical_Test, but is missing from Demographic and Biospecimen"
-            self.write_cross_sheet_id_error(merged_data,"{0} == {0} and {1} != {1} and {2} != {2}",error_msg,field_name)
-            error_msg = "ID is found in Demographic, but is missing from Prior_Clinical_Test and Biospecimen"
-            self.write_cross_sheet_id_error(merged_data,"{0} != {0} and {1} == {1} and {2} != {2}",error_msg,field_name)
-            error_msg = "ID is found in Biospecimen, but is missing from Prior_Clinical_Test and Demographic"
-            self.write_cross_sheet_id_error(merged_data,"{0} != {0} and {1} != {1} and {2} == {2}",error_msg,field_name)
-            error_msg = "ID is found in Prior_Clinical_Test and Demographic but is missing from Biospecimen"
-            self.write_cross_sheet_id_error(merged_data,"{0} == {0} and {1} == {1} and {2} != {2}",error_msg,field_name)
-            error_msg = "ID is found in Prior_Clinical_Test and Biospecimen but is missing from Demographic"
-            self.write_cross_sheet_id_error(merged_data,"{0} == {0} and {1} != {1} and {2} == {2}",error_msg,field_name)
-            error_msg = "ID is found in Demographic and Biospecimen but is missing from Prior_Clinical_Test"
-            self.write_cross_sheet_id_error(merged_data,"{0} != {0} and {1} == {1} and {2} == {2}",error_msg,field_name)
-##########################################################################################################################
+        all_merge = []
+        for iterF in file_list:
+            curr_col = self.Data_Object_Table[iterF]["Key_Cols"]
+            if len(all_merge) == 0:
+                all_merge = self.Data_Object_Table[iterF]["Data_Table"][curr_col]
+            else:
+                all_merge = all_merge.merge(self.Data_Object_Table[iterF]["Data_Table"][curr_col],on = field_name, how = "outer")
+                
+        pattern_str = '^' + str(self.CBC_ID) + pattern_str
+        all_merge =  all_merge[ all_merge[field_name].apply(lambda x: re.compile(pattern_str).match(x) is not None)]
+        
+        if field_name == "Research_Participant_ID":
+            if ("Age" in all_merge.columns) and ("SARS_CoV_2_PCR_Test_Result" in all_merge.columns):
+                self.make_error_queries(all_merge,"Demographic")
+            if ("Biospecimen_Type" in all_merge.columns) and ("SARS_CoV_2_PCR_Test_Result" in all_merge.columns):
+                self.make_error_queries(all_merge,"Biospecimen")
+            if ("Assay_ID" in all_merge.columns) and ("SARS_CoV_2_PCR_Test_Result" in all_merge.columns):
+                self.make_error_queries(all_merge,"Confimatory_Clinical_Test")
+        if field_name == "Biospecimen_ID":
+            if "Biospecimen_Type" not in all_merge.columns:
+                print("Biospecimen.csv was not provided, not able to validte Biospecimen_ID for cross sheet rules\n")
+            elif "aliquot.csv" in file_list:
+                error_data = all_merge.query("{0} != {0} and {1} == {1}".format("Biospecimen_Type","Aliquot_ID"))
+                error_msg = "ID is found in Aliquot.csv, however no coresponding ID found in biospecimen.csv" 
+                self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
+
+                error_data = all_merge.query("{0} == {0} and {1} != {1}".format("Biospecimen_Type","Aliquot_ID"))
+                error_msg = "ID is found in biospecimen.csv, however no coresponding ID found in aliquot.csv" 
+                self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
+            else:
+                for iterF in file_list:
+                    if iterF in ["equipment.csv"]:
+                        col_name = "Equipment_ID"
+                    if iterF in ["reagent.csv"]:
+                        col_name = "Reagent_Name"
+                    if iterF in ["consumable.csv"]:
+                        col_name = "Consumable_Name"
+                    if iterF in ["aliquot.csv","biospecimen.csv"]:
+                        continue
+                    try:  
+                        error_data = all_merge.query("{0} != {0} and {1} == {1}".format("Biospecimen_Type",col_name))
+                        error_msg = "ID is found in " + iterF + ", however no coresponding ID found in biospecimen.csv" 
+                        self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
+        
+                        error_data = all_merge.query("{0} == {0} and Biospecimen_Type == 'PBMC' and {1} != {1}".format("Biospecimen_Type",col_name))
+                        error_msg = "ID is found in biospecimen.csv and has a Biospecimen type of PBMC, however no coresponding ID found in " + iterF 
+                        self.update_error_table("Error",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
+            
+                        error_data = all_merge.query("{0} == {0} and Biospecimen_Type != 'PBMC' and {1} == {1}".format("Biospecimen_Type",col_name))
+                        error_msg = "ID is found in both biospecimen.csv and "+iterF + ", however has a Biospecimen type that is not PBMC" 
+                        self.update_error_table("Warning",error_data,"Cross_Biospecimen_ID.csv","Biospecimen_ID",error_msg)
+                    except Exception as e:
+                        print(e)
+    ##########################################################################################################################
     def write_col_errors(self,Error_Path):
         self.Column_error_count.to_csv(Error_Path + "All_Column_Errors_Found.csv",index=False)
     def write_error_file(self,Error_path):
         uni_name = list(set(self.Error_list["CSV_Sheet_Name"]))
         if len(uni_name) == 0:
-            print(colored("No Errors were found in this submission",'green'))
+            print("No Errors were found in this submission")
         for iterU in uni_name:
             curr_table = self.Error_list.query("CSV_Sheet_Name == @iterU")
             curr_name = iterU.replace('.csv','_Errors.csv')
@@ -478,5 +550,5 @@ class Submission_Object:
                 curr_table = curr_table.sort_values('Row_Index')
                 
             curr_table.to_csv(Error_path + curr_name,index=False)
-            print(iterU +  " has " + colored(str(len(curr_table)) + " Errors",'red'))
+            print(iterU +  " has " + str(len(curr_table)) + " Errors")
 ##########################################################################################################################

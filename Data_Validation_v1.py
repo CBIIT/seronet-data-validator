@@ -9,6 +9,10 @@ import pandas as pd
 import File_Submission_Object
 from Validation_Rules import Validation_Rules
 from Validation_Rules import check_ID_Cross_Sheet
+from Validation_Rules import compare_tests
+
+import warnings
+warnings.simplefilter("ignore")
 
 file_sep = os.path.sep
 eastern = dateutil.tz.gettz("US/Eastern")
@@ -22,12 +26,12 @@ def Data_Validation_Main():
     summary_path = root_dir + file_sep + "Summary_of_all_Submissions.xlsx"
     summary_file = []
     if os.path.exists(summary_path):
-        xls = pd.ExcelFile(summary_path)
+        xls = pd.ExcelFile(summary_path, engine = 'openpyxl')
         for iterZ in xls.sheet_names:
             if len(summary_file) == 0:
-                summary_file = pd.read_excel(summary_path,sheet_name = iterZ)
+                summary_file = pd.read_excel(summary_path,sheet_name = iterZ, engine = 'openpyxl')
             else:
-                new_file = pd.read_excel(summary_path,sheet_name = iterZ)
+                new_file = pd.read_excel(summary_path,sheet_name = iterZ, engine = 'openpyxl')
                 summary_file = pd.concat([summary_file,new_file])
         summary_file.reset_index(inplace = True)
         summary_file.drop(["index"],inplace = True,axis = 1)
@@ -35,21 +39,30 @@ def Data_Validation_Main():
         summary_file = pd.DataFrame(columns = ["Submission_Status","Date_Of_Last_Status","Folder_Location","CBC_Num","Date_Timestamp","Submission_Name","Validation_Status","JIRA_Ticket","Ticket_Status"])
 #############################################################################################
     Support_Files = get_subfolder(root_dir,file_sep,"Support_Files")
+    assay_folders = [i for i in Support_Files if os.path.isdir(i)]    
+    assay_data, assay_target = populate_assay_data(assay_folders)
     
     create_sub_folders(root_dir,file_sep,"00_Uploaded_Submissions")
     create_sub_folders(root_dir,file_sep,"01_Failed_File_Validation")
     create_sub_folders(root_dir,file_sep,"02_Data_Validation_No_Errors")
     create_sub_folders(root_dir,file_sep,"03_Data_Validation_Column_Errors")
     create_sub_folders(root_dir,file_sep,"04_Data_Validation_Data_Errors")
-    
+    create_sub_folders(root_dir,file_sep,"05_Data_Validation_Major_Errors")
+    create_sub_folders(root_dir,file_sep,"06_Data_Validation_Minor_Errors")
+   
     summary_file = check_for_typo(summary_file)
+    summary_file = move_minor_errors(summary_file,root_dir)
+    summary_file = move_major_errors(summary_file,root_dir)
+    
     summary_file = move_updated(summary_file,root_dir) #if status us updated, moves file back into queue to process
     summary_file = move_folder_to_uploaded(summary_file,root_dir) #if status is uploaded, moves file to correct bucket and updates excel sheet
 
     CBC_Folders = get_subfolder(root_dir,file_sep,"Files_To_Validate")
+
     if len(CBC_Folders) == 0:
         print("\nThe Files_To_Validate Folder is empty, no Submissions Downloaded to Process\n")
 #############################################################################################    
+    all_res = []
     for iterT in CBC_Folders:                       #loops over the list of the 4 CBC folders created during SOP       
         date_folders = os.listdir(iterT)
         cbc_name = pathlib.PurePath(iterT).name
@@ -57,10 +70,11 @@ def Data_Validation_Main():
             print("There are no submitted files for " + cbc_name)
             continue
         
+        res = [cbc_name,0,0]
         for iterD in date_folders:                  #Each submission is proceeded by a timestamp when was submitted         
             Date_path = iterT + file_sep + iterD
             Submissions_Names = os.listdir(Date_path)
-        
+            file_count = 0
             for iterS in Submissions_Names:         #If more then one submission within a date folder, checks each seperately
                 file_str = (Date_path + file_sep + iterS)
                 if os.path.isfile(file_str):
@@ -81,9 +95,9 @@ def Data_Validation_Main():
                     else:
                         if curr_status in ["Downloaded"]:
                             print("File Previously Downloaded - Pending Manual Review of Files")
-                        elif "Uploaded" in file_check['Submission_Status'].tolist()[0]:
-                            print("Submission Previously uploaded to coresponding S3 Bucket")
-                        elif curr_status:
+  #                      elif "Uploaded" in file_check['Submission_Status'].tolist()[0]:
+  #                          print("Submission Previously uploaded to coresponding S3 Bucket")
+                        elif curr_status in ["Pending Review"]:
                             print("Submission Previously Updated and Reprocssed - Pending Manual Review of changes")
                         elif curr_status not in "Unknown":
                             print("Submission Status (" + curr_status + ") is Unknown. Possible mistyped")
@@ -94,6 +108,7 @@ def Data_Validation_Main():
                 
                 orgional_path = Date_path + file_sep + iterS
                 print("\n## Starting the Data Validation Proccess for " + current_sub_object.File_Name + " ##")
+                file_count = file_count + 1
                 list_of_folders = os.listdir(Date_path + file_sep + iterS)
                 result_message = get_result_message(list_of_folders,root_dir,Date_path,orgional_path,current_sub_object,iterS)
                 if (result_message == ''):
@@ -107,7 +122,7 @@ def Data_Validation_Main():
                     summary_file = summary_file.append(curr_dict,ignore_index=True)
                     summary_file.drop_duplicates(["CBC_Num","Date_Timestamp","Submission_Name"], keep='last', inplace=True)
                     continue
-#######################################################################################################################################               
+#######################################################################################################################################
                 list_of_files = []
                 if "UnZipped_Files" in list_of_folders:
                     list_of_files = os.listdir(Date_path + file_sep + iterS + file_sep + "Unzipped_Files")
@@ -116,7 +131,9 @@ def Data_Validation_Main():
                     continue 
                 Subpath = Date_path + file_sep + iterS
                 current_sub_object = populate_object(current_sub_object, Subpath,list_of_files,file_sep,Support_Files)
-                    
+                current_sub_object.update_object(assay_data,"assay.csv")
+                current_sub_object.update_object(assay_target,"assay_target.csv")
+#######################################################################################################################################       
                 col_err_count = len(current_sub_object.Column_error_count)
                 if col_err_count > 0:
                     print("There are (" + str(col_err_count) + ") Column Names in the submission that are wrong/missing")
@@ -128,7 +145,7 @@ def Data_Validation_Main():
                     continue
                 valid_cbc_ids = str(current_sub_object.CBC_ID)
                 for file_name in current_sub_object.Data_Object_Table:
-                    if file_name not in ["submission.csv","shipping_manifest.csv"]:
+                    if file_name not in ["submission.csv","shipping_manifest.csv","assay.csv","assay_target.csv"]:
                         if "Data_Table" in current_sub_object.Data_Object_Table[file_name]:
                             try:
                                 data_table = current_sub_object.Data_Object_Table[file_name]['Data_Table']
@@ -140,6 +157,7 @@ def Data_Validation_Main():
                             print (file_name + " was not included in the submission")
 ##########################################################################################################################################
                 check_ID_Cross_Sheet(current_sub_object,re)
+                compare_tests(current_sub_object)
                 try:
                     create_sub_folders(Date_path,file_sep,iterS + file_sep + "Data_Validation_Results",True)
                     Data_Validation_Path = Date_path + file_sep + iterS + file_sep + "Data_Validation_Results"  
@@ -156,10 +174,14 @@ def Data_Validation_Main():
                 print("Validation for this File is complete")
                 summary_file = summary_file.append(curr_dict,ignore_index=True)
                 summary_file.drop_duplicates(["CBC_Num","Date_Timestamp","Submission_Name"], keep='last', inplace=True)
-                
+            
+            if file_count > 0:
+                res[1] = res[1] + 1                 #date folders in submission with data
+                res[2] = res[2] + file_count        #submissions within date folder
             if len(os.listdir(Date_path)) == 0:
                 shutil.rmtree(Date_path)        #if all files have been procesed, remove folder
         print("End of Current CBC Folder (" + cbc_name +"), moving to next CBC Folder")
+        all_res.append(res)
         if  len(os.listdir(iterT)) == 0:    #once all date folders have been processed, remove CBC folder
              shutil.rmtree(iterT)           #this will avoid confusion when next download happens
     print("ALl folders have been checked")
@@ -170,12 +192,19 @@ def Data_Validation_Main():
     writer = write_excel_sheets(writer,summary_file,"01_Failed_File_Validation","Failed_File_Validation")
     writer = write_excel_sheets(writer,summary_file,"03_Data_Validation_Column_Errors","Column_Errors_Found")
     writer = write_excel_sheets(writer,summary_file,"04_Data_Validation_Data_Errors","Failed_Data_Validation")
+    writer = write_excel_sheets(writer,summary_file,"06_Data_Validation_Minor_Errors","Pending_Feedback")
+    writer = write_excel_sheets(writer,summary_file,"05_Data_Validation_Major_Errors","Major_Errors_Found")
     writer = write_excel_sheets(writer,summary_file,"02_Data_Validation_No_Errors","Passed_Data_Validation")
     writer = write_excel_sheets(writer,summary_file,"00_Uploaded_Submissions","Uploaded_Submissions")
     
     writer.save()
     
+    print("\n#### Validation Summary ####\n")
+    for iterZ in range(len(all_res)):
+        print("CBC :: " + all_res[iterZ][0] + ", Had " + str(all_res[iterZ][1]) + " date folders checked.  And processed " + str(all_res[iterZ][2]) + " unique Submissions")
+        
     clear_empty_folders(root_dir)
+    input("\n\nPress Enter to close window...")
 ##########################################################################################################################################
 def display_error_line(ex):
     trace = []
@@ -185,6 +214,51 @@ def display_error_line(ex):
         tb = tb.tb_next
     print(str({'type': type(ex).__name__,'message': str(ex),'trace': trace}))
 ##########################################################################################################################################
+def get_assay_data(file_path,file_names,curr_file):
+    if curr_file + ".xlsx" in file_names:
+        curr_assay = pd.read_excel(file_path + file_sep + curr_file + ".xlsx",na_filter=False, engine = 'openpyxl')
+    elif curr_file + ".csv" in  file_names:
+        curr_assay = pd.read_csv(file_path + file_sep + curr_file + ".csv",na_filter=False)
+    return curr_assay
+def populate_assay_data(assay_folders):
+    assay_data = []
+    assay_target = []
+    for iterZ in assay_folders:
+        file_names = os.listdir(iterZ)
+        curr_assay = get_assay_data(iterZ,file_names,"assay")
+        curr_target = get_assay_data(iterZ,file_names,"assay_target_antigen")
+        if len(assay_data) == 0:
+            assay_data = curr_assay
+        else:
+            assay_data = pd.concat([assay_data,curr_assay])
+        if len(assay_target) == 0:
+            assay_target = curr_target
+        else:
+            assay_target = pd.concat([assay_data,curr_target])
+
+    assay_data.reset_index(inplace = True)
+    assay_target.reset_index(inplace = True)
+    
+    if "Assay_Target_Antigen" in assay_target.columns:
+       assay_target = assay_target.rename(columns={"Assay_Target_Antigen": "Assay_Target"})
+       
+    assay_data = clean_up_tables(assay_data)
+    assay_target = clean_up_tables(assay_target)
+    
+    return assay_data,assay_target
+def clean_up_tables(curr_table):
+    curr_table.dropna(axis=0, how="all", thresh=None, subset=None, inplace=True)        #if a row is completely blank remove it
+    if len(curr_table) > 0:
+        missing_logic = curr_table.eq(curr_table.iloc[:, 0], axis=0).all(axis=1)
+        curr_table = curr_table[[i is not True for i in missing_logic]]      
+        curr_table = curr_table .loc[:,~ curr_table .columns.str.startswith('Unnamed')]     #if a column is completely blank, remove it
+      
+        for iterC in curr_table.columns:
+            try:
+                curr_table[iterC] = curr_table[iterC].apply(lambda x: x.replace('–','-'))
+            except Exception:       #only apply to strings, dates and numbers will error
+                pass
+        return curr_table
 def populate_dict(curr_date,cbc_name,iterD,current_sub_object):
     curr_dict = { "Submission_Status":"Downloaded","Date_Of_Last_Status":curr_date,"CBC_Num":cbc_name,
                  "Date_Timestamp":iterD,"Submission_Name":current_sub_object.File_Name, "JIRA_Ticket":" ","Ticket_Status":"In_Progress"}
@@ -232,6 +306,53 @@ def move_updated(summary_file,root_dir):
     else:
         print("There are " + str(move_count) + " Submissions Found that had Updates (Changes)")
         print("These submissions have been moved back into the Files_To_Validate Folder to be reproccesed")
+    return summary_file
+def move_major_errors(summary_file,root_dir):
+    print("\n#####   Checking for Submissions flagged as Major_Errors_Found   #####\n")
+    samp_file = summary_file[summary_file.apply(lambda x: x['Submission_Status'] in ['Major_Errors_Found'] and 
+                                                '05_Data_Validation_Major_Errors' not in x['Folder_Location'],axis = 1)]
+    
+    move_count = 0
+    for iterZ in samp_file.index:
+        curr_loc = (samp_file["Folder_Location"][iterZ] + file_sep + samp_file["CBC_Num"][iterZ] + 
+                   file_sep + samp_file["Date_Timestamp"][iterZ])
+        
+        new_path = (root_dir + file_sep + "Files_Processed" + file_sep + "05_Data_Validation_Major_Errors" + file_sep + 
+                    samp_file["CBC_Num"][iterZ] +  file_sep + samp_file["Date_Timestamp"][iterZ])
+        move_func(curr_loc,new_path)
+        move_count = move_count + 1
+        new_location = root_dir + file_sep + "Files_Processed" + file_sep + "05_Data_Validation_Major_Errors"
+        summary_file["Folder_Location"][iterZ] = new_location
+
+    if move_count == 0:
+        print("No Submissions were flagged as major errors since last time program was run")
+    else:
+        print("There are " + str(move_count) + " Submissions Found that had Major Errors")
+        print("These submissions have been moved into 05_Data_Validation_Major_Errors")
+    return summary_file
+def move_minor_errors(summary_file,root_dir):
+    print("\n#####   Checking for Submissions flagged as Pending_Feedback   #####\n")
+    samp_file = summary_file[summary_file.apply(lambda x: x['Submission_Status'] in ['Pending_Feedback'] and 
+                                                '06_Data_Validation_Minor_Errors' not in x['Folder_Location'],axis = 1)]
+
+    
+    move_count = 0
+    for iterZ in samp_file.index:
+        curr_loc = (samp_file["Folder_Location"][iterZ] + file_sep + samp_file["CBC_Num"][iterZ] + 
+                   file_sep + samp_file["Date_Timestamp"][iterZ])
+        
+        new_path = (root_dir + file_sep + "Files_Processed" + file_sep + "06_Data_Validation_Minor_Errors" + file_sep + 
+                    samp_file["CBC_Num"][iterZ] +  file_sep + samp_file["Date_Timestamp"][iterZ])
+        move_func(curr_loc,new_path)
+        move_count = move_count + 1
+             
+        new_location = root_dir + file_sep + "Files_Processed" + file_sep + "06_Data_Validation_Minor_Errors"
+        summary_file["Folder_Location"][iterZ] = new_location
+    if move_count == 0:
+        print("No Submissions were flagged as pending feedback since last time program was run")
+    else:
+        print("There are " + str(move_count) + " Submissions Found that had Minor Errors")
+        print("These submissions have been moved into 06_Data_Validation_Minor_Errors")
     return summary_file
 def move_folder_to_uploaded(summary_file,root_dir):
     print("\n#####   Checking for Submissions that have been uploaded to the S3 Bucket   #####\n")
@@ -293,20 +414,24 @@ def clear_empty_folders(root_dir):
                shutil.rmtree(process_path + file_sep + iterF + file_sep+ iterC)
 def check_for_typo(summary_file):
     print("#####   Checking for Errors/Typos in the Submission Status Field  #####")
-    print("Valid Submission Status options are Downloaded, Updated, Uploaded_to_Passed, Uploaded_to_Failed \n")
+    print("Valid Submission Status options are:\n Downloaded, Updated, Uploaded_to_Passed, Uploaded_to_Failed, Major_Errors_Found, Pending_Feedback \n")
     error_count = 0
     for iterZ in summary_file.index:
         curr_status = summary_file["Submission_Status"][iterZ]
         curr_status = curr_status.lower()
         if curr_status in  ["updated","update","fixed"]:
             summary_file["Submission_Status"][iterZ] = "Updated"
-        elif "upload" in curr_status or "uploaded" in curr_status:
-            if "pass" in curr_status or "passed" in curr_status:
+        elif ("upload" in curr_status) or ("uploaded" in curr_status):
+            if ("pass" in curr_status) or ("passed" in curr_status):
                 summary_file["Submission_Status"][iterZ] = "Uploaded_to_Passed_S3_Bucket"
-            elif "fail" in curr_status or "faileded" in curr_status:
+            elif ("fail" in curr_status) or ("faileded" in curr_status):
                 summary_file["Submission_Status"][iterZ] = "Uploaded_to_Failed_S3_Bucket"
             else:
                 summary_file["Submission_Status"][iterZ] = "Unknown"
+        elif ("major" in curr_status) or ("errors" in curr_status):
+            summary_file["Submission_Status"][iterZ] = "Major_Errors_Found"
+        elif ("pending" in curr_status) or ("feedback" in curr_status):
+            summary_file["Submission_Status"][iterZ] = "Pending_Feedback"
         elif curr_status not in  ["downloaded","pending review"]:
             summary_file["Submission_Status"][iterZ] = "Unknown"
         if summary_file["Submission_Status"][iterZ] == "Unknown":
