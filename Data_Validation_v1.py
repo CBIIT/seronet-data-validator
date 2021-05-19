@@ -5,6 +5,8 @@ import shutil
 import re
 import os
 import pandas as pd
+from colorama import init
+from termcolor import colored
 
 import File_Submission_Object
 from Validation_Rules import Validation_Rules
@@ -21,6 +23,7 @@ validation_date = datetime.datetime.now(tz=eastern).strftime("%Y-%m-%d")
 
 
 def Data_Validation_Main():
+    init()
     root_dir = "C:\\Seronet_Data_Validation"
     passing_msg = ("File is a valid Zipfile. No errors were found in submission. " +
                    "Files are good to proceed to Data Validation")
@@ -71,15 +74,24 @@ def Data_Validation_Main():
     if len(CBC_Folders) == 0:
         print("\nThe Files_To_Validate Folder is empty, no Submissions Downloaded to Process\n")
 #############################################################################################
+    rename_CBC_folders(root_dir, CBC_Folders)
+    CBC_Folders = get_subfolder(root_dir, "Files_To_Validate")
+
+    sort_order = [int(i[-2:]) for i in CBC_Folders]
+    sort_list = sorted(range(len(sort_order)), key=lambda k: sort_order[k])
+    CBC_Folders = [CBC_Folders[i] for i in sort_list]
+
     all_res = []
     for iterT in CBC_Folders:
         date_folders = os.listdir(iterT)
         cbc_name = pathlib.PurePath(iterT).name
+        res = [cbc_name, 0, 0]
         if len(date_folders) == 0:
             print("There are no submitted files for " + cbc_name)
+            clear_dir(iterT)
+            all_res.append(res)
             continue
 
-        res = [cbc_name, 0, 0]
         for iterD in date_folders:
             Date_path = iterT + file_sep + iterD
             Submissions_Names = os.listdir(Date_path)
@@ -89,7 +101,7 @@ def Data_Validation_Main():
                 if os.path.isfile(file_str):
                     os.remove(file_str)
                     file_str = file_str.replace((root_dir + file_sep + "Files_To_Validate"), "")
-                    print("\n##    File Validation has NOT been run for " + file_str + "    ##")
+                    print(colored("\n##    File Validation has NOT been run for " + file_str + "    ##", 'yellow'))
                     continue
                 current_sub_object = File_Submission_Object.Submission_Object(iterS[15:])
                 curr_dict = populate_dict(validation_date, cbc_name, iterD, current_sub_object)
@@ -104,8 +116,7 @@ def Data_Validation_Main():
                         curr_dict["Submission_Status"] = "Pending Review"
                     else:
                         if curr_status in ["Downloaded"]:
-                            print("File Previously Downloaded - Pending Manual" +
-                                  " Review of Files")
+                            pass
                         elif curr_status in ["Pending Review"]:
                             print("Submission Previously Updated and Reprocssed" +
                                   " - Pending Manual Review of changes")
@@ -148,8 +159,9 @@ def Data_Validation_Main():
 #############################################################################################################################
                 col_err_count = len(current_sub_object.Column_error_count)
                 if col_err_count > 0:
-                    print("There are (" + str(col_err_count) + ") Column Names in the submission that are wrong/missing")
-                    print("Not able to process this submission, please correct and resubmit \n")
+                    print(colored("There are (" + str(col_err_count) +
+                                  ") Column Names in the submission that are wrong/missing", 'red'))
+                    print(colored("Not able to process this submission, please correct and resubmit \n", 'red'))
                     current_sub_object.write_col_errors((Subpath + file_sep))
                     error_str = "Submission has Column Errors, Data Validation NOT Preformed"
                     move_file_and_update(orgional_path, root_dir, current_sub_object, curr_dict,
@@ -197,10 +209,9 @@ def Data_Validation_Main():
                 res[2] = res[2] + file_count
             if len(os.listdir(Date_path)) == 0:
                 shutil.rmtree(Date_path)
-                print("\nEnd of Current CBC Folder (" + cbc_name + "), moving to next CBC Folder")
+        print(colored("\nEnd of Current CBC Folder (" + cbc_name + "), moving to next CBC Folder", 'blue'))
         all_res.append(res)
-        if len(os.listdir(iterT)) == 0:
-            shutil.rmtree(iterT)
+        clear_dir(iterT)
     print("\nALl folders have been checked")
     print("Closing Validation Program")
 
@@ -225,6 +236,11 @@ def Data_Validation_Main():
     input("\n\nPress Enter to close window...")
 
 
+def clear_dir(file_path):
+    if len(os.listdir(file_path)) == 0:
+        shutil.rmtree(file_path)
+
+
 def display_error_line(ex):
     trace = []
     tb = ex.__traceback__
@@ -234,6 +250,19 @@ def display_error_line(ex):
                       "lineno": tb.tb_lineno})
         tb = tb.tb_next
     print(str({'type': type(ex).__name__, 'message': str(ex), 'trace': trace}))
+
+
+def rename_CBC_folders(root_dir, CBC_Folders):
+    os.chdir(root_dir + file_sep + "Files_To_Validate" + file_sep)
+    for cur_folder in CBC_Folders:
+        if "cbc01" in cur_folder:
+            os.rename("cbc01", "Feinstein_CBC01")
+        if "cbc02" in cur_folder:
+            os.rename("cbc02", "UMN_CBC02")
+        if "cbc03" in cur_folder:
+            os.rename("cbc03", "ASU_CBC03")
+        if "cbc04" in cur_folder:
+            os.rename("cbc04", "Mt_Sinai_CBC04")
 
 
 def get_assay_data(file_path, file_names, curr_file):
@@ -250,6 +279,8 @@ def populate_assay_data(assay_folders):
     assay_target = []
     for iterZ in assay_folders:
         file_names = os.listdir(iterZ)
+        if len(file_names) == 0:
+            continue
         if len(file_names) > 0:
             curr_assay = get_assay_data(iterZ, file_names, "assay")
             curr_target = get_assay_data(iterZ, file_names, "assay_target_antigen")
@@ -260,16 +291,14 @@ def populate_assay_data(assay_folders):
             if len(assay_target) == 0:
                 assay_target = curr_target
             else:
-                assay_target = pd.concat([assay_data, curr_target])
-
-    assay_data.reset_index(inplace=True)
-    assay_target.reset_index(inplace=True)
-
-    if "Assay_Target_Antigen" in assay_target.columns:
-        assay_target = assay_target.rename(columns={"Assay_Target_Antigen": "Assay_Target"})
-
-    assay_data = clean_up_tables(assay_data)
-    assay_target = clean_up_tables(assay_target)
+                assay_target = pd.concat([assay_target, curr_target])
+    if len(assay_data) > 0:
+        assay_data.reset_index(inplace=True)
+        assay_target.reset_index(inplace=True)
+        if "Assay_Target_Antigen" in assay_target.columns:
+            assay_target = assay_target.rename(columns={"Assay_Target_Antigen": "Assay_Target"})
+        assay_data = clean_up_tables(assay_data)
+        assay_target = clean_up_tables(assay_target)
 
     return assay_data, assay_target
 
@@ -312,7 +341,7 @@ def create_sub_folders(root_dir, folder_name, data_folder=False):
 
 
 def move_target_folder(orgional_path, error_path, file_name):
-#    orgional_path = orgional_path + file_sep + file_name
+    # orgional_path = orgional_path + file_sep + file_name
     target_path = orgional_path.replace("C:\\Seronet_Data_Validation\\Files_To_Validate", error_path)
     move_func(orgional_path, target_path)
 
@@ -335,9 +364,9 @@ def check_multi_sub(curr_loc, new_path, samp_file, iterZ):
         file_list = os.listdir(curr_loc)
         if not os.path.exists(new_path):
             os.makedirs(new_path)
-            
+
         curr_submission = [i for i in file_list if samp_file["Submission_Name"][iterZ] in i][0]
-        curr_loc = curr_loc+ file_sep + curr_submission
+        curr_loc = curr_loc + file_sep + curr_submission
         new_path = new_path + file_sep + curr_submission
     return curr_loc, new_path
 
@@ -351,7 +380,7 @@ def move_updated(summary_file, root_dir):
                     file_sep + samp_file["Date_Timestamp"][iterZ])
         new_path = (root_dir + file_sep + "Files_To_Validate" + file_sep + samp_file["CBC_Num"][iterZ] +
                     file_sep + samp_file["Date_Timestamp"][iterZ])
-        
+
         curr_loc, new_path = check_multi_sub(curr_loc, new_path, samp_file, iterZ)
         move_func(curr_loc, new_path)
         move_count = move_count + 1
@@ -374,7 +403,7 @@ def move_major_errors(summary_file, root_dir):
 
         new_path = (root_dir + file_sep + "Files_Processed" + file_sep + "05_Data_Validation_Major_Errors" + file_sep +
                     samp_file["CBC_Num"][iterZ] + file_sep + samp_file["Date_Timestamp"][iterZ])
-        
+
         curr_loc, new_path = check_multi_sub(curr_loc, new_path, samp_file, iterZ)
         move_func(curr_loc, new_path)
         move_count = move_count + 1
@@ -398,10 +427,10 @@ def move_minor_errors(summary_file, root_dir):
     for iterZ in samp_file.index:
         curr_loc = (samp_file["Folder_Location"][iterZ] + file_sep + samp_file["CBC_Num"][iterZ] +
                     file_sep + samp_file["Date_Timestamp"][iterZ])
- 
+
         new_path = (root_dir + file_sep + "Files_Processed" + file_sep + "06_Data_Validation_Minor_Errors" + file_sep +
                     samp_file["CBC_Num"][iterZ] + file_sep + samp_file["Date_Timestamp"][iterZ])
-       
+
         curr_loc, new_path = check_multi_sub(curr_loc, new_path, samp_file, iterZ)
         move_func(curr_loc, new_path)
         move_count = move_count + 1
@@ -449,7 +478,7 @@ def move_folder_to_uploaded(summary_file, root_dir):
 def get_result_message(list_of_folders, Date_path, orgional_path, iterS):
     result_message = ''
     if "File_Validation_Results" not in list_of_folders:
-        print("File-Validation has not been run on this submission\n")
+        print(colored("File-Validation has not been run on this submission\n", "yellow"))
         shutil.rmtree(orgional_path)
     else:
         result_file = (Date_path + file_sep + iterS + file_sep + "File_Validation_Results" +

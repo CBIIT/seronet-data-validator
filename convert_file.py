@@ -3,7 +3,7 @@ import PyInstaller.__main__
 
 PyInstaller.__main__.run([
     'Data_Validation_v1.py',
-#    '--onefile',           #will complie but does not run properly
+    #     '--onefile',           #will complie but does not run properly
     '--nowindowed',
     '--noupx',
     '--clean',
@@ -13,6 +13,8 @@ PyInstaller.__main__.run([
     '--paths=C:\\Users\\breadsp2\\Anaconda3\\Library\\bin\\',
     '--name=Data_Validator',
     '--exclude-module=xlrd',
+    '--exclude-module=botocore',
+    '--exclude-module=pyarrow',
     '--exclude-module=alabaster',
     '--exclude-module=argon2',
     '--exclude-module=babel',
@@ -57,9 +59,3 @@ PyInstaller.__main__.run([
     '--exclude-module=zmq',
     '--exclude-module=zope',
 ])
-
-
-file_names = os.listdir("C:\\Python_Code\\dist\\Data_Validator")
-for iterZ in file_names:
-    if "mkl" in iterZ:
-        os.remove("C:\\Python_Code\\dist\\Data_Validator\\" + iterZ)
