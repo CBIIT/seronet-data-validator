@@ -72,6 +72,9 @@ class Submission_Object:
                 Data_Table = pd.read_csv(file_path, na_filter=False)
             elif ".xlsx" in file_path:
                 Data_Table = pd.read_excel(file_path, na_filter=False)
+            else:
+                print("Unknown file extension")
+                Data_Table = pd.DataFrame()
         except Exception:
             Data_Table = pd.DataFrame()
         self.Data_Object_Table[file_name]["Data_Table"].append(Data_Table)
@@ -230,9 +233,9 @@ class Submission_Object:
 
     def sort_and_drop(self, header_name, keep_blank=False):
         self.Error_list.drop_duplicates(["CSV_Sheet_Name", "Row_Index", "Column_Name", "Column_Value"], inplace=True)
-        if keep_blank is False:
-            drop_idx = self.Error_list.query("Column_Name == @header_name and Column_Value == ''").index
-            self.Error_list.drop(drop_idx, inplace=True)
+#        if keep_blank is False:
+#            drop_idx = self.Error_list.query("Column_Name == @header_name and Column_Value == ''").index
+#            self.Error_list.drop(drop_idx, inplace=True)
 
     def update_error_table(self, msg_type, error_data, sheet_name, header_name, error_msg, keep_blank=False):
         for i in error_data.index:
@@ -248,6 +251,20 @@ class Submission_Object:
             self.add_error_values("Error", sheet_name, 0, header_name, "Entire Column", error_str)
             data_table = []
         return data_table, error_str
+
+    def unknown_list_dependancy(self, sheet_name, header_name, data_table, depend_col, depend_list):
+        error_data = data_table.query("{0} not in {1}".format(depend_col, depend_list))
+        self.add_unkown_warnings(error_data, sheet_name, header_name, depend_col)
+
+    def unknow_number_dependancy(self, sheet_name, header_name, data_table, depend_col, depend_list):
+        data_table = data_table[data_table[depend_col].apply(lambda x: not isinstance(x, (float, int)))]
+        error_data = data_table[data_table[depend_col].apply(lambda x: x not in depend_list)]
+        self.add_unkown_warnings(error_data, sheet_name, header_name, depend_col)
+
+    def add_unkown_warnings(self, error_data, sheet_name, header_name, depend_col):
+        error_msg = depend_col + " is a dependant column and has an invalid value for this record, unable to validate value for " + header_name + " "
+        self.update_error_table("Not Validated", error_data, sheet_name, header_name, error_msg, keep_blank=False)
+
 
     def check_assay_special(self, data_table, header_name, file_name, field_name):
         try:
@@ -445,12 +462,12 @@ class Submission_Object:
             else:
                 error_msg = error_str + ".  Value must be a string and NOT N/A"
             # value can be a string but can not be a string of spaces
-            good_logic = data_table[header_name].apply(lambda x: (isinstance(x, (int, float, str)) or x in ['']) and
-                                                       (x not in ['N/A']) and len(str(x).strip()) > 0)
+            good_logic = data_table[header_name].apply(lambda x: (isinstance(x, (int, float, str)) or x in [''] or
+                                                                  len(str(x).strip()) > 0) and (x not in ['N/A']))
             if na_allowed is True:
                 error_msg.replace("and NOT N/A", "OR N/A")
-                good_logic = data_table[header_name].apply(lambda x: (isinstance(x, (int, float, str)) or x in ['N/A', ''])
-                                                           and len(str(x).strip()) > 0)
+                good_logic = data_table[header_name].apply(lambda x: (isinstance(x, (int, float, str)) or x in [''] or
+                                                                  len(str(x).strip()) > 0) or (x not in ['N/A']))
             error_data = data_table[[not x for x in good_logic]]
             if header_name in ["Comments"]:
                 error_msg = "Value must be a non empty string and NOT N/A ('  ') not allowed"
@@ -560,6 +577,7 @@ class Submission_Object:
 
     def part_ids_errors(self, all_merge, error_msg, querry_str, test_field):
         error_data = all_merge.query(querry_str.format(test_field))
+        error_data.drop_duplicates("Research_Participant_ID", inplace=True)
         self.update_error_table("Error", error_data, "Cross_Participant_ID.csv", "Research_Participant_ID", error_msg)
 
     def get_cross_sheet_ID(self, re, field_name, pattern_str, sheet_name):
@@ -591,7 +609,7 @@ class Submission_Object:
         if field_name == "Biospecimen_ID":
             if "Biospecimen_Type" not in all_merge.columns:
                 print("Biospecimen.csv was not provided, not able to validte Biospecimen_ID for cross sheet rules\n")
-            if "aliquot.csv" in file_list:
+            elif "aliquot.csv" in file_list:
                 error_data = all_merge.query("{0} != {0} and {1} == {1}".format("Biospecimen_Type", "Aliquot_ID"))
                 error_msg = "ID is found in Aliquot.csv, however no coresponding ID found in biospecimen.csv"
                 self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv", "Biospecimen_ID", error_msg)
@@ -599,34 +617,34 @@ class Submission_Object:
                 error_data = all_merge.query("{0} == {0} and {1} != {1}".format("Biospecimen_Type", "Aliquot_ID"))
                 error_msg = "ID is found in biospecimen.csv, however no coresponding ID found in aliquot.csv"
                 self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv", "Biospecimen_ID", error_msg)
-
-            for iterF in file_list:
-                if iterF in ["equipment.csv"]:
-                    col_name = "Equipment_ID"
-                if iterF in ["reagent.csv"]:
-                    col_name = "Reagent_Name"
-                if iterF in ["consumable.csv"]:
-                    col_name = "Consumable_Name"
-                if iterF in ["aliquot.csv", "biospecimen.csv"]:
-                    continue
-                try:
-                    error_data = all_merge.query("{0} != {0} and {1} == {1}".format("Biospecimen_Type", col_name))
-                    error_msg = "ID is found in " + iterF + ", however no coresponding ID found in biospecimen.csv"
-                    self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv", "Biospecimen_ID", error_msg)
-                    error_data = all_merge.query(("{0} == {0} and Biospecimen_Type == 'PBMC'" +
-                                                  "and {1} != {1}").format("Biospecimen_Type", col_name))
-                    error_msg = ("ID is found in biospecimen.csv and has a Biospecimen type of PBMC," +
-                                 " however no coresponding ID found in " + iterF)
-                    self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv",
-                                            "Biospecimen_ID", error_msg)
-                    error_data = all_merge.query(("{0} == {0} and Biospecimen_Type != 'PBMC'" +
-                                                 " and {1} == {1}").format("Biospecimen_Type", col_name))
-                    error_msg = ("ID is found in both biospecimen.csv and "+iterF +
-                                 ", however has a Biospecimen type that is not PBMC")
-                    self.update_error_table("Warning", error_data, "Cross_Biospecimen_ID.csv",
-                                            "Biospecimen_ID", error_msg)
-                except Exception as e:
-                    print(e)
+            else:
+                for iterF in file_list:
+                    if iterF in ["equipment.csv"]:
+                        col_name = "Equipment_ID"
+                    if iterF in ["reagent.csv"]:
+                        col_name = "Reagent_Name"
+                    if iterF in ["consumable.csv"]:
+                        col_name = "Consumable_Name"
+                    if iterF in ["aliquot.csv", "biospecimen.csv"]:
+                        continue
+                    try:
+                        error_data = all_merge.query("{0} != {0} and {1} == {1}".format("Biospecimen_Type", col_name))
+                        error_msg = "ID is found in " + iterF + ", however no coresponding ID found in biospecimen.csv"
+                        self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv", "Biospecimen_ID", error_msg)
+                        error_data = all_merge.query(("{0} == {0} and Biospecimen_Type == 'PBMC'" +
+                                                      "and {1} != {1}").format("Biospecimen_Type", col_name))
+                        error_msg = ("ID is found in biospecimen.csv and has a Biospecimen type of PBMC," +
+                                     " however no coresponding ID found in " + iterF)
+                        self.update_error_table("Error", error_data, "Cross_Biospecimen_ID.csv",
+                                                "Biospecimen_ID", error_msg)
+                        error_data = all_merge.query(("{0} == {0} and Biospecimen_Type != 'PBMC'" +
+                                                     " and {1} == {1}").format("Biospecimen_Type", col_name))
+                        error_msg = ("ID is found in both biospecimen.csv and "+iterF +
+                                     ", however has a Biospecimen type that is not PBMC")
+                        self.update_error_table("Warning", error_data, "Cross_Biospecimen_ID.csv",
+                                                "Biospecimen_ID", error_msg)
+                    except Exception as e:
+                        print(e)
 
     def check_map_ids(self, column_test):
         ref_id_data = self.Data_Object_Table["reference_panel.csv"]["Data_Table"]
