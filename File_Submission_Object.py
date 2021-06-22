@@ -35,6 +35,9 @@ def convert_data_type(v):
 
 
 def check_multi_rule(data_table, depend_col, depend_val):
+    if len(data_table) == 0:
+        error_str = depend_col + " is not found, unable to validate Data "
+        return data_table, error_str
     if depend_col not in data_table.columns.to_list():
         error_str = depend_col + " is not found, unable to validate Data "
         data_table = -1
@@ -46,7 +49,7 @@ def check_multi_rule(data_table, depend_col, depend_val):
         data_table = data_table[data_table[depend_col].apply(lambda x: isinstance(x, pd.Timestamp))]
         error_str = depend_col + " is a Date "
     else:
-        data_table = data_table[data_table[depend_col].apply(lambda x: x in depend_val)]
+        data_table = data_table.query("{0} in @depend_val".format(depend_col))
         error_str = depend_col + " is in " + str(depend_val) + " "
     return data_table, error_str
 ######################################################################################################################
@@ -265,7 +268,6 @@ class Submission_Object:
         error_msg = depend_col + " is a dependant column and has an invalid value for this record, unable to validate value for " + header_name + " "
         self.update_error_table("Not Validated", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
-
     def check_assay_special(self, data_table, header_name, file_name, field_name):
         try:
             error_data = data_table.query("{0} != {0}".format(field_name))
@@ -429,6 +431,8 @@ class Submission_Object:
         second_col = header_name.replace('Total_Cells', 'Live_Cells')
         data_table, error_str = self.check_for_dependancy(data_table, header_name, "Is A Number", sheet_name, header_name)
         data_table, error_str = self.check_for_dependancy(data_table, second_col, "Is A Number", sheet_name, header_name)
+        if len(data_table) == 0:
+            return
         error_data = data_table.query("{0} > {1}".format(second_col, header_name))
         for iterZ in error_data.index:
             error_msg = "Total Cell Count must be greater then Live Cell Count (" + str(error_data[second_col][iterZ]) + ")"
@@ -440,6 +444,8 @@ class Submission_Object:
         data_table, error_str = self.check_for_dependancy(data_table, header_name, "Is A Number", sheet_name, header_name)
         data_table, error_str = self.check_for_dependancy(data_table, live_col, "Is A Number", sheet_name, header_name)
         data_table, error_str = self.check_for_dependancy(data_table, total_col, "Is A Number", sheet_name, header_name)
+        if len(data_table) == 0:
+            return
 
         error_data = data_table[data_table.apply(lambda x: x[total_col] == 0 and x[header_name] not in ['N/A'], axis=1)]
         error_msg = "Total Count is 0, Viability_Count should be N/A"
@@ -467,7 +473,7 @@ class Submission_Object:
             if na_allowed is True:
                 error_msg.replace("and NOT N/A", "OR N/A")
                 good_logic = data_table[header_name].apply(lambda x: (isinstance(x, (int, float, str)) or x in [''] or
-                                                                  len(str(x).strip()) > 0) or (x not in ['N/A']))
+                                                           len(str(x).strip()) > 0) or (x not in ['N/A']))
             error_data = data_table[[not x for x in good_logic]]
             if header_name in ["Comments"]:
                 error_msg = "Value must be a non empty string and NOT N/A ('  ') not allowed"
