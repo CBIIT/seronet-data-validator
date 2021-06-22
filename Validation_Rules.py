@@ -139,8 +139,9 @@ def check_ID_validation(header_name, current_object, file_name, data_table, re, 
         if file_name in ["biospecimen.csv"]:
             current_object.check_for_dup_ids(file_name, header_name)
     elif header_name in ["Aliquot_ID", "CBC_Biospecimen_Aliquot_ID"]:
-        pattern_str = '[_]{1}[0-9]{6}[_]{1}[0-9]{3}[_]{1}[0-9]{2}$'
+        pattern_str = '[_]{1}[0-9]{6}[_]{1}[0-9]{3}[_]{1}[0-9]{1,2}$'
         current_object.check_id_field(file_name, data_table, re, header_name, pattern_str, valid_cbc_ids, "XX_XXXXXX_XXX_XX")
+
         if ("Aliquot_ID" in data_table.columns) and ("Biospecimen_ID" in data_table.columns):
             current_object.check_if_substr(data_table, "Biospecimen_ID", "Aliquot_ID", file_name, header_name)
         if ("Aliquot_ID" in data_table.columns):
@@ -381,13 +382,16 @@ def check_processing_rules(header_name, current_object, data_table, file_name, d
     elif (header_name in ["Equipment_Type", "Reagent_Name", "Consumable_Name"]):
         if (header_name in ["Equipment_Type"]):
             list_values = ['Refrigerator', '-80 Refrigerator', 'LN Refrigerator', 'Microsope', 'Pipettor',
-                           'Controlled-Rate Freezer', 'Automated-Cell Counter']
+                           'Controlled-Rate Freezer', 'Automated-Cell Counter', '-80 Freezer',
+                           'LN Freezer', 'Centrifuge', 'Microscope']
+
         elif (header_name in ["Reagent_Name"]):
-            list_values = (['DPBS', 'Ficoll-Hypaque', 'RPMI-1640', 'no L-Glutamine', 'Fetal Bovine Serum',
-                            '200 mM L-Glutamine', '1M Hepes', 'Penicillin/Streptomycin', 'DMSO',
-                            'Cell Culture Grade', 'Vital Stain Dye'])
+            list_values = (['DPBS', 'Ficoll-Hypaque', 'RPMI-1640, no L-Glutamine', 'Fetal Bovine Serum',
+                            '200 mM L-Glutamine', '1M Hepes', 'Penicillin/Streptomycin',
+                            'DMSO, Cell Culture Grade', 'Vital Stain Dye'])
         elif (header_name in ["Consumable_Name"]):
-            list_values = ["50 mL Polypropylene Tube", "15 mL Conical Tube", "Cryovial Label"]
+            list_values = ["50 mL Polypropylene Tube", "15 mL Conical Tube", "Cryovial Label",
+                           "2mL Cryovial"]
         current_object.check_in_list(file_name, data_table, header_name, "Biospecimen_Type", ["PBMC"], list_values)
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
     elif ("Aliquot" in header_name) or ("Equipment_ID" in header_name):
