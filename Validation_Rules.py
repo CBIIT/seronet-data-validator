@@ -11,6 +11,7 @@ def Validation_Rules(re, datetime, current_object, data_table, file_name, valid_
 
     min_date = datetime.date(1900,  1,  1)
     max_date = datetime.date.today()
+    curr_year = max_date.year
     for header_name in data_table.columns:
         if header_name in drop_list:
             continue
@@ -20,13 +21,13 @@ def Validation_Rules(re, datetime, current_object, data_table, file_name, valid_
                                                           valid_cbc_ids, Rule_Found, 0)
         if file_name in ["prior_clinical_test.csv"]:
             Required_column, Rule_Found = check_prior_clinical(header_name, current_object, data_table, file_name,
-                                                               datetime, min_date, max_date, Rule_Found, 1)
+                                                               datetime, max_date, curr_year, Rule_Found, 1)
         if file_name in ["demographic.csv"]:
             Required_column, Rule_Found = check_demographic(header_name, current_object, data_table, file_name,
-                                                            datetime, min_date, max_date, Rule_Found, 1)
+                                                            datetime, curr_year, max_date, Rule_Found, 1)
         if file_name in ["biospecimen.csv"]:
             Required_column, Rule_Found = check_biospecimen(header_name, current_object, data_table, file_name,
-                                                            datetime, min_date, max_date, Rule_Found, 1)
+                                                            datetime, max_date, curr_year, Rule_Found, 1)
         if file_name in ["aliquot.csv", "equipment.csv", "reagent.csv", "consumable.csv"]:
             Required_column, Rule_Found = check_processing_rules(header_name, current_object, data_table, file_name,
                                                                  datetime, max_date, Rule_Found, 1)
@@ -67,15 +68,15 @@ def compare_tests(current_object):
         confirm_data = current_object.Data_Object_Table["confirmatory_clinical_test.csv"]["Data_Table"]
         assay_data = current_object.Data_Object_Table["assay.csv"]["Data_Table"]
         merged_data = prior_data.merge(confirm_data, on="Research_Participant_ID", how="outer")
-        merged_data = merged_data.merge(assay_data, on="Assay_ID", how="left")
+        merged_data = merged_data.merge(assay_data, on=["Assay_ID", "Assay_Target_Organism"], how="left")
         merged_data = merged_data[["Research_Participant_ID", "SARS_CoV_2_PCR_Test_Result",
-                                   "Target_Organism", "Interpretation"]]
+                                   "Assay_Target_Organism", "Interpretation"]]
         part_list = list(set(merged_data["Research_Participant_ID"].tolist()))
-        target_virus = ["SARS-CoV-2 Virus", "SARS-COV-2"]
+        target_virus = ["SARS-CoV-2 Virus", "SARS-COV-2", "SARS-CoV-2"]
 
         header = "Research_Participant_ID"
         for iterP in part_list:
-            curr_part = merged_data.query("Research_Participant_ID == @iterP and Target_Organism in @target_virus")
+            curr_part = merged_data.query("Research_Participant_ID == @iterP and Assay_Target_Organism in @target_virus")
             if len(curr_part) == 0:     # SARS_Cov-2 confirm test is missing
                 error_msg = "Participant is Missing SARS_Cov-2 Confirmatory Test"
                 curr_part = merged_data.query("Research_Participant_ID == @iterP")
@@ -98,7 +99,7 @@ def compare_tests(current_object):
 
 def get_curr_tests(curr_part, prior_stat, target_virus):
     part_test = curr_part[curr_part.apply(lambda x: (x['SARS_CoV_2_PCR_Test_Result'] == prior_stat) and
-                                          (x["Target_Organism"] in target_virus), axis=1)]["Interpretation"]
+                                          (x["Assay_Target_Organism"] in target_virus), axis=1)]["Interpretation"]
     lower_list = [i.lower() for i in part_test.tolist()]
     neg_count = 0
     pos_count = 0
@@ -149,7 +150,7 @@ def check_ID_validation(header_name, current_object, file_name, data_table, re, 
     elif header_name in ["Assay_ID"]:
         pattern_str = '[_]{1}[0-9]{3}$'
         current_object.check_id_field(file_name, data_table, re, header_name, pattern_str, valid_cbc_ids, "XX_XXX")
-        current_object.check_assay_special(data_table, header_name, file_name, "Assay_Name")
+        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name)
         if file_name in ["assay.csv"]:
             current_object.check_for_dup_ids(file_name, header_name)
     elif header_name in ["Biorepository_ID", "Parent_Biorepository__ID"]:
@@ -170,28 +171,18 @@ def check_ID_validation(header_name, current_object, file_name, data_table, re, 
     return Required_column, Rule_Found
 
 
-def check_prior_clinical(header_name, current_object, data_table, file_name, datetime, min_date,
-                         max_date, Rule_Found, index, Required_column="Yes"):
+def check_prior_clinical(header_name, current_object, data_table, file_name, datetime, max_date, curr_year,
+                         Rule_Found, index, Required_column="Yes"):
     if header_name in ['SARS_CoV_2_PCR_Test_Result_Provenance']:
         list_values = ['From Medical Record', 'Self-Reported']
         current_object.check_in_list(file_name, data_table, header_name, "None", "None", list_values)
     elif header_name in ['SARS_CoV_2_PCR_Test_Result']:
         list_values = ['Positive', 'Negative']
         current_object.check_in_list(file_name, data_table, header_name, "None", "None", list_values)
-    elif header_name in 'Date_of_SARS_CoV_2_PCR_sample_collection':
-        Required_column = "Yes: SARS-Positive"
-        current_object.check_date(datetime, file_name, data_table, header_name, 'SARS_CoV_2_PCR_Test_Result',
-                                  ["Positive"], False, "Date", min_date, max_date)
-        current_object.check_date(datetime, file_name, data_table, header_name, 'SARS_CoV_2_PCR_Test_Result',
-                                  ["Negative"], True, "Date", min_date, max_date)
     elif 'Test_Result_Provenance' in header_name:  # checks result proveance for valid input options
         Required_column = "Yes: SARS-Negative"
         list_values = ['Self-Reported', 'From Medical Record', 'N/A']
         current_object.check_in_list(file_name, data_table, header_name, "None", "None", list_values)
-    elif ('Date_of' in header_name) and ('Test' in header_name):
-        Required_column = "No"
-        current_object.check_date(datetime, file_name, data_table, header_name, "None", "None",
-                                  True, "Date", min_date, max_date)
     elif ('Test_Result' in header_name) or (header_name in ["Seasonal_Coronavirus_Serology_Result",
                                                             "Seasonal_Coronavirus_Molecular_Result"]):
         Required_column = "Yes: SARS-Negative"
@@ -230,11 +221,39 @@ def check_prior_clinical(header_name, current_object, data_table, file_name, dat
         current_object.unknown_list_dependancy(file_name, header_name, data_table,
                                                'SARS_CoV_2_PCR_Test_Result', ["Positive", "Negative"])
     else:
-        Rule_Found[index] = False
+        Duration_Rules = []
+        if ("SARS_CoV_2_PCR" in header_name):
+            Duration_Rules = get_duration("SARS_CoV_2_PCR", "Sample_Collection")
+        elif ("CMV_Serology" in header_name):
+            Duration_Rules = get_duration("CMV", "Serology_Test")
+        elif ("CMV_Molecular" in header_name):
+            Duration_Rules = get_duration("CMV", "Molecular_Test")
+        elif ("EBV_Serology" in header_name):
+            Duration_Rules = get_duration("EBV", "Serology_Test")
+        elif ("EBV_Molecular" in header_name):
+            Duration_Rules = get_duration("EBV", "Molecular_Test")
+        elif ("HIV_Serology" in header_name):
+            Duration_Rules = get_duration("EBV", "Serology_Test")
+        elif ("HIV_Molecular" in header_name):
+            Duration_Rules = get_duration("EBV", "Molecular_Test")
+        elif ("HepB_Serology" in header_name):
+            Duration_Rules = get_duration("HepB", "Serology_Test")
+        elif ("HepB_sAg" in header_name):
+            Duration_Rules = get_duration("HepB", "sAg")
+        elif ("Seasonal_Coronavirus" in header_name):
+            Duration_Rules = get_duration("EBV", "Serology_Test")
+        elif ("Seasonal_Coronavirus" in header_name):
+            Duration_Rules = get_duration("EBV", "Molecular_Test")
+
+        if len(Duration_Rules) > 0:
+            current_object.check_duration_rules(file_name, data_table, header_name, "None", "None",
+                                                max_date, curr_year, Duration_Rules)
+        else:
+            Rule_Found[index] = False
     return Required_column, Rule_Found
 
 
-def check_demographic(header_name, current_object, data_table, file_name, datetime, min_date, max_date,
+def check_demographic(header_name, current_object, data_table, file_name, datetime, curr_year, max_date,
                       Rule_Found, index, Required_column="Yes"):
     if (header_name in ['Age']):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 1, 200, "int")
@@ -255,25 +274,27 @@ def check_demographic(header_name, current_object, data_table, file_name, dateti
                                      ["Negative"], ['No', 'N/A'])
         current_object.unknown_list_dependancy(file_name, header_name, data_table,
                                                "SARS_CoV_2_PCR_Test_Result", ['Positive', 'Negative'])
-    elif (header_name in ['Date_of_Symptom_Onset']):
+    elif ("Post_Symptom_Onset" in header_name) or (header_name in ['Symptom_Onset_Year']):
         Required_column = "Yes: SARS-Positive"
-        current_object.check_date(datetime, file_name, data_table, header_name, "Is_Symptomatic",
-                                  ["Yes"], False, "Date", min_date, max_date)
         current_object.check_in_list(file_name, data_table, header_name, "Is_Symptomatic", ["No", "N/A"], ["N/A"])
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Is_Symptomatic", ["Yes", "No", "N/A"])
+        Duration_Rules = ['Post_Symptom_Onset_Duration', 'Post_Symptom_Onset_Duration_Unit',
+                          'Symptom_Onset_Year']
+        current_object.check_duration_rules(file_name, data_table, header_name, "Is_Symptomatic", ["Yes"],
+                                            max_date, curr_year, Duration_Rules)
+    elif ("Post_Symptom_Resolution" in header_name) or (header_name in ['Symptom_Resolution_Year']):
+        Required_column = "Yes: SARS-Positive"
+        current_object.check_in_list(file_name, data_table, header_name, "Symptoms_Resolved", ["No", "N/A"], ["N/A"])
+        current_object.unknown_list_dependancy(file_name, header_name, data_table, "Symptoms_Resolved", ["Yes", "No", "N/A"])
+        Duration_Rules = ['Post_Symptom_Resolution_Duration', 'Post_Symptom_Resolution_Duration_Unit',
+                          'Symptom_Resolution_Year']
+        current_object.check_duration_rules(file_name, data_table, header_name, "Symptoms_Resolved", ["Yes"],
+                                            max_date, curr_year, Duration_Rules)
     elif (header_name in ['Symptoms_Resolved']):
         Required_column = "Yes: SARS-Positive"
         current_object.check_in_list(file_name, data_table, header_name, "Is_Symptomatic", ["Yes"], ["Yes", "No"])
         current_object.check_in_list(file_name, data_table, header_name, "Is_Symptomatic", ["No", "N/A"], ["N/A"])
         current_object.unknown_list_dependancy(file_name, header_name, data_table, 'Is_Symptomatic', ["Yes", "No", "N/A"])
-
-    elif (header_name in ['Date_of_Symptom_Resolution']):
-        Required_column = "Yes: SARS-Positive"
-        current_object.check_date(datetime, file_name, data_table, header_name, "Symptoms_Resolved",
-                                  ["Yes"], False, "Date", min_date, max_date)
-        current_object.check_in_list(file_name, data_table, header_name, "Symptoms_Resolved", ["No", "N/A"], ["N/A"])
-        current_object.unknown_list_dependancy(file_name, header_name, data_table, "Symptoms_Resolved", ["Yes", "No", "N/A"])
-
     elif (header_name in ['Covid_Disease_Severity']):
         Required_column = "Yes: SARS-Positive"
         current_object.check_if_number(file_name, data_table, header_name, 'SARS_CoV_2_PCR_Test_Result',
@@ -300,7 +321,7 @@ def check_demographic(header_name, current_object, data_table, file_name, dateti
     return Required_column, Rule_Found
 
 
-def check_biospecimen(header_name, current_object, data_table, file_name, datetime, min_date, max_date, Rule_Found,
+def check_biospecimen(header_name, current_object, data_table, file_name, datetime, max_date, curr_year, Rule_Found,
                       index, Required_column="Yes"):
     if(header_name in ["Biospecimen_Group"]):
         current_object.check_in_list(file_name, data_table, header_name, 'SARS_CoV_2_PCR_Test_Result',
@@ -313,8 +334,9 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
         list_values = ["Serum",  "EDTA Plasma",  "PBMC",  "Saliva",  "Nasal swab"]
         current_object.check_in_list(file_name, data_table, header_name, "None", "None", list_values)
     elif(header_name in ["Initial_Volume_of_Biospecimen"]):
-        current_object.check_if_number(file_name, data_table, header_name, "None", "None", True,
-                                       0, 1e9, "float")
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1e9, "float")
+    elif(header_name in ["Biospecimen_Collection_Year"]):
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 1900, curr_year, "int")
     elif (header_name in ['Collection_Tube_Type_Expiration_Date']):
         Required_column = "No"
         current_object.check_date(datetime, file_name, data_table, header_name, "None", "None", True, "Date",
@@ -322,28 +344,17 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
     elif (header_name in ['Collection_Tube_Type_Lot_Number']):
         Required_column = "No"
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", True)
-    elif ('Date_of' in header_name):
-        current_object.check_date(datetime, file_name, data_table, header_name, "None", "None", False,
-                                  "Date", min_date, max_date)
-    elif 'Time_of' in header_name:
-        current_object.check_date(datetime, file_name, data_table, header_name, "None", "None", False, "Time")
-    elif(header_name in ["Storage_Time_at_2_8"]):
+    elif ('Biospecimen_Processing_Batch_ID' in header_name):
+        current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
+    elif(header_name in ["Storage_Time_at_2_8_Degrees_Celsius"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1000, "float")
     elif(header_name in ["Storage_Start_Time_at_2_8_Initials", "Storage_End_Time_at_2_8_Initials"]):
-        current_object.check_if_string(file_name, data_table, header_name, "Storage_Time_at_2_8", "Is A Number", False)
-        current_object.check_in_list(file_name, data_table, header_name, "Storage_Time_at_2_8", ["N/A"], ['N/A'])
-        current_object.unknow_number_dependancy(file_name, header_name, data_table, "Storage_Time_at_2_8", ['N/A'])
-    elif(header_name in ["Storage_Start_Time_at_2_8", "Storage_End_Time_at_2_8"]):
-        current_object.check_date(datetime, file_name, data_table, header_name, "Storage_Time_at_2_8",
-                                  "Is A Number", False, "Date", min_date, max_date)
-        current_object.check_in_list(file_name, data_table, header_name, "Storage_Time_at_2_8", ["N/A"], ['N/A'])
-        current_object.unknow_number_dependancy(file_name, header_name, data_table, "Storage_Time_at_2_8", ['N/A'])
+        current_object.check_if_string(file_name, data_table, header_name, "Storage_Time_at_2_8_Degrees_Celsius", "Is A Number", False)
+        current_object.check_in_list(file_name, data_table, header_name, "Storage_Time_at_2_8_Degrees_Celsius", ["N/A"], ['N/A'])
+        current_object.unknow_number_dependancy(file_name, header_name, data_table, "Storage_Time_at_2_8_Degrees_Celsius", ['N/A'])
     elif ((header_name.find('Company_Clinic') > -1) or (header_name.find('Initials') > -1)
           or (header_name.find('Collection_Tube_Type') > -1)):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
-    # ["Final_Concentration_of_Biospecimen"] field has been dropped from csv file
-    elif header_name in ["Final_Concentration_of_Biospecimen"]:
-        pass
     elif(header_name.find('Hemocytometer_Count') > -1) or (header_name.find('Automated_Count') > -1):
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["PBMC"],
                                        True, 0, 1e9, "float")
@@ -352,10 +363,12 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["Serum"],
                                        True, 0, 1e9, "float")
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
-    elif(header_name in ["Storage_Start_Time_80_LN2_storage"]):
-        current_object.check_date(datetime, file_name, data_table, header_name, "Biospecimen_Type", ["Serum"],
-                                  False, "Time")
-        current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
+    elif ("Duration_Units" in header_name):
+        Required_column = "Yes"
+        current_object.check_in_list(file_name, data_table, header_name, "None", "None", ['Minute', 'Hour', 'Day'])
+    elif ("Duration" in header_name):
+        Required_column = "Yes"
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 0, 500, "float")
     else:
         Rule_Found[index] = False
     return Required_column, Rule_Found
@@ -404,14 +417,14 @@ def check_processing_rules(header_name, current_object, data_table, file_name, d
 def check_confimation_rules(header_name, current_object, data_table, file_name, datetime, min_date, max_date,
                             Rule_Found, index, Required_column="Yes"):
     if header_name in ["Assay_Target"]:
-        current_object.check_assay_special(data_table, header_name, file_name, "Assay_Antigen_Source")
+        current_object.check_assay_special(data_table, header_name, "assay_target.csv", file_name)
     elif (header_name in ["Instrument_ID", "Test_Operator_Initials", "Assay_Kit_Lot_Number"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
-    elif ('Date_of' in header_name):
-        current_object.check_date(datetime, file_name, data_table, header_name, "None", "None", False, "Date",
-                                  min_date, max_date)
-    elif 'Time_of' in header_name:
-        current_object.check_date(datetime, file_name, data_table, header_name, "None", "None", False, "Time")
+    elif ('Test_Batch_ID' in header_name):
+        current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
+    elif ("Assay_Target_Organism" in header_name):
+        current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
+        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name)
     elif (header_name in ["Assay_Target_Sub_Region", "Measurand_Antibody", "Derived_Result"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", True)
     elif (header_name in ["Interpretation"]):
@@ -433,6 +446,9 @@ def check_confimation_rules(header_name, current_object, data_table, file_name, 
         current_object.check_if_string(file_name, data_table, header_name, "Raw_Result", "Is A Number", False)
         current_object.check_in_list(file_name, data_table, header_name, "Raw_Result", ["N/A"], ["N/A"])
 #        current_object.unknow_number_dependancy(file_name, header_name, data_table, "Raw_Result", ["N/A"])
+    elif ("Biospecimen_Collection_to_Test_Duration" in header_name):
+        Required_column = "Yes"
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 0, 500, "float")
     else:
         Rule_Found[index] = False
     return Required_column, Rule_Found
@@ -440,7 +456,7 @@ def check_confimation_rules(header_name, current_object, data_table, file_name, 
 
 def check_assay_rules(header_name, current_object, data_table, file_name, Rule_Found,
                       index, Required_column="Yes"):
-    if (header_name in ["Technology_Type", "Assay_Name", "Assay_Manufacturer", "Target_Organism"]):
+    if (header_name in ["Technology_Type", "Assay_Name", "Assay_Manufacturer", "Assay_Target_Organism"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
     elif (header_name in ["EUA_Status", "Assay_Multiplicity", "Assay_Control_Type", "Measurand_Antibody_Type",
                           "Assay_Result_Type", "Peformance_Statistics_Source", "Assay_Antigen_Source"]):
@@ -492,3 +508,10 @@ def check_biorepo_rules(header_name, current_object, data_table, file_name, Rule
     elif header_name in ["Destination_ID"]:
         current_object.check_if_cbc_num(file_name, header_name, data_table, cbc_list)
     return Required_column, Rule_Found
+
+
+def get_duration(duration_col, col_string):
+    dur_list = [f'Post_{duration_col}_{col_string}_Duration',
+                f'Post_{duration_col}_{col_string}_Duration_Unit',
+                f'{duration_col}_{col_string}_Year']
+    return dur_list

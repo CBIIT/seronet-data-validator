@@ -184,16 +184,34 @@ class Submission_Object:
                 self.CBC_ID = -1
                 self.Submit_Participant_IDs = "00"
                 self.Submit_Biospecimen_IDs = "00"
+            if len(self.Submit_Participant_IDs) == 0:
+                self.Submit_Participant_IDs = "0"
+            if len(self.Submit_Biospecimen_IDs) == 0:
+                self.Submit_Biospecimen_IDs = "0"
         if self.CBC_ID > 0:
             print("The CBC Code for " + self.Submitted_Name + " Is: " + str(self.CBC_ID) + "\n")
         else:
             print("The Submitted CBC name: " + self.Submitted_Name + " does NOT exist in the Database")
 
+#    def correct_var_types(self, file_name):
+#        data_table = self.Data_Object_Table[file_name]['Data_Table']
+#        data_table, drop_list = self.merge_tables(file_name, data_table)
+#        col_names = data_table.columns
+#        data_table = pd.DataFrame([convert_data_type(c) for c in l] for l in data_table.values)
+#        data_table.columns = col_names
+#        return data_table, drop_list
+
     def correct_var_types(self, file_name):
         data_table = self.Data_Object_Table[file_name]['Data_Table']
         data_table, drop_list = self.merge_tables(file_name, data_table)
         col_names = data_table.columns
-        data_table = pd.DataFrame([convert_data_type(c) for c in l] for l in data_table.values)
+        for curr_col in col_names:
+            if ("Batch_ID" in curr_col) or ("Catalog_Number" in curr_col) or ("Lot_Number" in curr_col):
+                data_table[curr_col] = [str(i) for i in data_table[curr_col]]
+            elif curr_col in ["Derived_Result", "Equipment_ID", "Instrument_ID"]:
+                data_table[curr_col] = [str(i) for i in data_table[curr_col]]
+            else:
+                data_table[curr_col] = [convert_data_type(c) for c in data_table[curr_col]]
         data_table.columns = col_names
         return data_table, drop_list
 
@@ -210,10 +228,6 @@ class Submission_Object:
             data_table = self.check_merge(data_table, "biospecimen.csv", "Biospecimen_ID")
         elif file_name in ["assay_target.csv"]:
             data_table = self.check_merge(data_table, "assay.csv", "Assay_ID")
-        elif file_name in ["confirmatory_clinical_test.csv"]:
-            data_table = self.check_merge(data_table, "assay.csv", "Assay_ID")
-            data_table = self.check_merge(data_table, "assay_target.csv",
-                                          ["Assay_ID", "Assay_Target", "Assay_Target_Sub_Region"])
         if ("Comments_x" in data_table.columns) and ("Comments" not in data_table.columns):
             data_table.rename(columns={"Comments_x": "Comments"}, inplace=True)
         drop_list = [i for i in data_table.columns if i not in self.Data_Object_Table[file_name]["Column_List"]]
@@ -268,13 +282,13 @@ class Submission_Object:
         error_msg = depend_col + " is a dependant column and has an invalid value for this record, unable to validate value for " + header_name + " "
         self.update_error_table("Not Validated", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
-    def check_assay_special(self, data_table, header_name, file_name, field_name):
-        try:
-            error_data = data_table.query("{0} != {0}".format(field_name))
-            error_msg = header_name + " is not found in the table of valid " + header_name + " in databse or submitted file"
-            self.update_error_table("Error", error_data, file_name, header_name, error_msg, keep_blank=False)
-        except Exception:
-            pass
+    def check_assay_special(self, data_table, header_name, file_name, sheet_name):
+        assay_table = self.Data_Object_Table[file_name]["Data_Table"]
+        assay_table.rename(columns={"Target_Organism": "Assay_Target_Organism"}, inplace=True)
+        error_data = data_table.merge(assay_table, on=header_name, indicator=True, how="outer")
+        error_data = error_data.query("_merge in ['left_only']")
+        error_msg = header_name + " is not found in the table of valid " + header_name + " in databse or submitted file"
+        self.update_error_table("Error", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
     def check_id_field(self, sheet_name, data_table, re, field_name, pattern_str, cbc_id, pattern_error):
         if field_name in ["Biorepository_ID", "Parent_Biorepository__ID", "Subaliquot_ID"]:
@@ -345,6 +359,10 @@ class Submission_Object:
             if list_values == ["N/A"]:
                 passing_values = data_table[data_table[header_name].apply(lambda x: x == "N/A")]
             else:
+                try:
+                    list_values = list(set(list_values + [i.lower() for i in list_values]))
+                except Exception:   # list of numbers does not have a lower
+                    pass
                 query_str = "{0} in @list_values or {0} in ['']".format(header_name)
                 passing_values = data_table.query(query_str)
             row_index = [iterI for iterI in data_table.index if (iterI not in passing_values.index)]
@@ -415,8 +433,8 @@ class Submission_Object:
         to_high = good_data[header_name].apply(lambda x: x > upper_lim)
         if num_type == "int":
             is_float = good_data[header_name].apply(lambda x: x.is_integer() is False)
-            error_msg = ("Value must be an interger between " + str(lower_lim) + " and " + str(upper_lim) +
-                         ", decimal values are not allowed")
+            error_msg = (error_str + "Value must be an interger between " + str(lower_lim) + " and " +
+                         str(upper_lim) + ", decimal values are not allowed")
             self.update_error_table("Error", good_data[is_float], sheet_name, header_name, error_msg)
         if na_allowed is True:
             good_logic = data_table[header_name].apply(lambda x: isinstance(x, (int, float)) or x in ['N/A', ''])
@@ -426,6 +444,52 @@ class Submission_Object:
         self.update_error_table("Error", error_data, sheet_name, header_name, error_msg)
         self.update_error_table("Error", good_data[to_low], sheet_name, header_name, error_msg)
         self.update_error_table("Error", good_data[to_high], sheet_name, header_name, error_msg)
+
+    def check_duration_rules(self, file_name, data_table, header_name, depend_col, depend_val,
+                             max_date, curr_year, Duration_Rules):
+        if (header_name in [Duration_Rules[0]]):
+            self.check_if_number(file_name, data_table, header_name, depend_col, depend_val, True, 0, 500, "int")
+            self.compare_dates_to_curr(file_name, data_table, header_name,
+                                       (header_name + "_Unit"), Duration_Rules[2], max_date)
+        elif (header_name in [Duration_Rules[1]]):
+            if Duration_Rules[1] in data_table.columns:
+                self.check_in_list(file_name, data_table, header_name, Duration_Rules[0], ["N/A"], ["N/A"])
+                self.check_in_list(file_name, data_table, header_name, Duration_Rules[0], "Is A Number",
+                                   ["Day", "Week", "Month", "Year"])
+                self.unknow_number_dependancy(file_name, header_name, data_table, Duration_Rules[0], ["N/A"])
+        elif (header_name in [Duration_Rules[2]]):
+            self.check_in_list(file_name, data_table, header_name, Duration_Rules[0], ["N/A"], ["N/A"])
+            self.check_if_number(file_name, data_table, header_name, Duration_Rules[0], "Is A Number",
+                                 False, 1900, curr_year, "int")
+            self.unknow_number_dependancy(file_name, header_name, data_table, Duration_Rules[0], ["N/A"])
+
+    def compare_dates_to_curr(self, sheet_name, data_table, header_name, unit_name, year_name, curr_date):
+        curr_year = curr_date.year
+        curr_month = curr_date.month
+        test_data = data_table[data_table[year_name].apply(lambda x: isinstance(x, (int, float)))]
+        if unit_name in data_table.columns:
+            year_data = test_data.query("{0} == 'Year' or {0} == 'year'".format(unit_name))
+            month_data = test_data.query("{0} == 'Month' or {0} == 'month'".format(unit_name))
+            day_data = test_data.query("{0} == 'Day' or {0} == 'day'".format(unit_name))
+
+            bad_month = month_data[month_data[header_name] + month_data[year_name]*12 > (curr_year*12 + curr_month)]
+            bad_year = year_data[year_data[header_name] + year_data[year_name] > curr_year]
+            day_dur = day_data[year_name].apply(lambda x: (curr_date - (datetime.date(int(x), 1, 1))).days)
+            bad_day = day_data[day_data[header_name] > day_dur]
+            bad_data = pd.concat([bad_day, bad_month, bad_year])
+        else:
+            unit_name = "days"
+            day_dur = test_data[year_name].apply(lambda x: (curr_date - (datetime.date(int(x), 1, 1))).days)
+            bad_data = test_data[test_data[header_name] > day_dur]
+        for iterZ in bad_data.index:
+            error_msg = header_name + " Exists in the Future, not valid combination, Check Duration Units"
+            if unit_name == "days":
+                error_unit = "Days"
+            else:
+                error_unit = bad_data.loc[iterZ][unit_name]
+            error_val = (error_unit + ": " + str(bad_data.loc[iterZ][header_name]) +
+                         ", Year: " + str(bad_data.loc[iterZ][year_name]))
+            self.add_error_values("Error", sheet_name, iterZ+2, header_name, error_val, error_msg)
 
     def compare_total_to_live(self, sheet_name, data_table, header_name):
         second_col = header_name.replace('Total_Cells', 'Live_Cells')
