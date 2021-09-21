@@ -139,14 +139,14 @@ class Submission_Object:
             return
         header_list = self.Data_Object_Table[file_name]['Data_Table'].columns.tolist()
         check_file = [i for i in Support_Files if file_name.replace('csv', 'xlsx') in i]
-        header_list = [clean_up_column_names(i) for i in header_list]
+#        header_list = [clean_up_column_names(i) for i in header_list]
         self.Data_Object_Table[file_name]['Data_Table'].columns = header_list
 
         if len(check_file) == 0:
             return
         check_file = pd.read_excel(check_file[0], engine='openpyxl')
         col_list = check_file.columns.tolist()
-        col_list = [clean_up_column_names(i) for i in col_list]
+#        col_list = [clean_up_column_names(i) for i in col_list]
 
         in_csv_not_excel = [i for i in header_list if i not in col_list]
         in_excel_not_csv = [i for i in col_list if i not in header_list]
@@ -282,10 +282,13 @@ class Submission_Object:
         error_msg = depend_col + " is a dependant column and has an invalid value for this record, unable to validate value for " + header_name + " "
         self.update_error_table("Not Validated", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
-    def check_assay_special(self, data_table, header_name, file_name, sheet_name):
+    def check_assay_special(self, data_table, header_name, file_name, sheet_name, re):
         assay_table = self.Data_Object_Table[file_name]["Data_Table"]
         assay_table.rename(columns={"Target_Organism": "Assay_Target_Organism"}, inplace=True)
-        error_data = data_table.merge(assay_table, on=header_name, indicator=True, how="outer")
+
+        curr_assay = assay_table[assay_table["Assay_ID"].apply(lambda x: re.compile('^' + str(self.CBC_ID)
+                                                                                    + '_[0-9]{3}').match(str(x)) is not None)]
+        error_data = data_table.merge(curr_assay, on=header_name, indicator=True, how="outer")
         error_data = error_data.query("_merge in ['left_only']")
         error_msg = header_name + " is not found in the table of valid " + header_name + " in databse or submitted file"
         self.update_error_table("Error", error_data, sheet_name, header_name, error_msg, keep_blank=False)
@@ -445,10 +448,15 @@ class Submission_Object:
         self.update_error_table("Error", good_data[to_low], sheet_name, header_name, error_msg)
         self.update_error_table("Error", good_data[to_high], sheet_name, header_name, error_msg)
 
+        if ('Duration_of' in header_name) and (('infection' in header_name) or ("HAART_Therapy" in header_name)):
+            warn_data = data_table.query("{0} == 'N/A'".format(header_name))
+            warn_msg = f"{depend_col} is in {depend_val} and {header_name} is N/A"
+            self.update_error_table("Warning", warn_data, sheet_name, header_name, warn_msg)
+
     def check_duration_rules(self, file_name, data_table, header_name, depend_col, depend_val,
                              max_date, curr_year, Duration_Rules):
         if (header_name in [Duration_Rules[0]]):
-            self.check_if_number(file_name, data_table, header_name, depend_col, depend_val, True, 0, 500, "int")
+            self.check_if_number(file_name, data_table, header_name, depend_col, depend_val, True, 0, 100000, "int")
             self.compare_dates_to_curr(file_name, data_table, header_name,
                                        (header_name + "_Unit"), Duration_Rules[2], max_date)
         elif (header_name in [Duration_Rules[1]]):

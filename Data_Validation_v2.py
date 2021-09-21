@@ -187,8 +187,8 @@ def Data_Validation_Main():
                 current_sub_object.update_object(assay_data, "assay.csv")
                 current_sub_object.update_object(assay_target, "assay_target.csv")
 #############################################################################################################################
-#                col_err_count = len(current_sub_object.Column_error_count)
-                col_err_count = 0
+                col_err_count = len(current_sub_object.Column_error_count)
+#                col_err_count = 0
                 if col_err_count > 0:
                     print(colored("There are (" + str(col_err_count) +
                                   ") Column Names in the submission that are wrong/missing", 'red'))

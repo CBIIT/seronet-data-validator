@@ -34,8 +34,8 @@ def Validation_Rules(re, datetime, current_object, data_table, file_name, valid_
         if file_name in ["confirmatory_clinical_test.csv", "serology_confirmation_test_results.csv",
                          "assay_validation.csv"]:
             Required_column, Rule_Found = check_confimation_rules(header_name, current_object, data_table, file_name,
-                                                                  datetime, min_date, max_date, Rule_Found, 1)
-        if file_name in ["assay.csv", "assay_target.csv"]:
+                                                                  datetime, min_date, max_date, Rule_Found, 1, re)
+        if file_name in ["assay.csv", "assay_target.csv", "assay_qc.csv"]:
             Required_column, Rule_Found = check_assay_rules(header_name, current_object, data_table, file_name,
                                                             Rule_Found, 1)
         if file_name in ["biorepository_id_map.csv", "reference_panel.csv"]:
@@ -150,7 +150,7 @@ def check_ID_validation(header_name, current_object, file_name, data_table, re, 
     elif header_name in ["Assay_ID"]:
         pattern_str = '[_]{1}[0-9]{3}$'
         current_object.check_id_field(file_name, data_table, re, header_name, pattern_str, valid_cbc_ids, "XX_XXX")
-        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name)
+        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name, re)
         if file_name in ["assay.csv"]:
             current_object.check_for_dup_ids(file_name, header_name)
     elif header_name in ["Biorepository_ID", "Parent_Biorepository__ID"]:
@@ -333,7 +333,7 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
     elif(header_name in ["Biospecimen_Type"]):
         list_values = ["Serum",  "EDTA Plasma",  "PBMC",  "Saliva",  "Nasal swab"]
         current_object.check_in_list(file_name, data_table, header_name, "None", "None", list_values)
-    elif(header_name in ["Initial_Volume_of_Biospecimen"]):
+    elif(header_name in ["Initial_Volume_of_Biospecimen (mL)"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1e9, "float")
     elif(header_name in ["Biospecimen_Collection_Year"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 1900, curr_year, "int")
@@ -348,7 +348,7 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
     elif(header_name in ["Storage_Time_at_2_8_Degrees_Celsius"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1000, "float")
-    elif(header_name in ["Storage_Start_Time_at_2_8_Initials", "Storage_End_Time_at_2_8_Initials"]):
+    elif(header_name in ["Storage_Start_Time_at_2-8_Initials", "Storage_End_Time_at_2-8_Initials"]):
         current_object.check_if_string(file_name, data_table, header_name, "Storage_Time_at_2_8_Degrees_Celsius", "Is A Number", False)
         current_object.check_in_list(file_name, data_table, header_name, "Storage_Time_at_2_8_Degrees_Celsius", ["N/A"], ['N/A'])
         current_object.unknow_number_dependancy(file_name, header_name, data_table, "Storage_Time_at_2_8_Degrees_Celsius", ['N/A'])
@@ -359,7 +359,7 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["PBMC"],
                                        True, 0, 1e9, "float")
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
-    elif(header_name in ["Centrifugation_Time", "RT_Serum_Clotting_Time"]):
+    elif(header_name in ["Centrifugation_Time (min)", "RT_Serum_Clotting_Time (min)"]):
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["Serum"],
                                        True, 0, 1e9, "float")
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
@@ -378,7 +378,7 @@ def check_processing_rules(header_name, current_object, data_table, file_name, d
                            Rule_Found, index, Required_column="Yes"):
     if (header_name in ["Aliquot_Volume"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1e9, "float")
-    elif (header_name in ["Aliquot_Concentration"]):
+    elif (header_name in ["Aliquot_Concentration (cells/mL)"]):
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["PBMC"],
                                        True, 0, 1e9, "float")
         current_object.unknown_list_dependancy(file_name, header_name, data_table, "Biospecimen_Type", bio_type_list)
@@ -415,16 +415,16 @@ def check_processing_rules(header_name, current_object, data_table, file_name, d
 
 
 def check_confimation_rules(header_name, current_object, data_table, file_name, datetime, min_date, max_date,
-                            Rule_Found, index, Required_column="Yes"):
+                            Rule_Found, index, re, Required_column="Yes"):
     if header_name in ["Assay_Target"]:
-        current_object.check_assay_special(data_table, header_name, "assay_target.csv", file_name)
+        current_object.check_assay_special(data_table, header_name, "assay_target.csv", file_name, re)
     elif (header_name in ["Instrument_ID", "Test_Operator_Initials", "Assay_Kit_Lot_Number"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
     elif ('Test_Batch_ID' in header_name):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
     elif ("Assay_Target_Organism" in header_name):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
-        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name)
+        current_object.check_assay_special(data_table, header_name, "assay.csv", file_name, re)
     elif (header_name in ["Assay_Target_Sub_Region", "Measurand_Antibody", "Derived_Result"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", True)
     elif (header_name in ["Interpretation"]):
@@ -457,6 +457,8 @@ def check_confimation_rules(header_name, current_object, data_table, file_name, 
 def check_assay_rules(header_name, current_object, data_table, file_name, Rule_Found,
                       index, Required_column="Yes"):
     if (header_name in ["Technology_Type", "Assay_Name", "Assay_Manufacturer", "Assay_Target_Organism"]):
+        current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
+    elif "Quality_Control" in header_name:
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", False)
     elif (header_name in ["EUA_Status", "Assay_Multiplicity", "Assay_Control_Type", "Measurand_Antibody_Type",
                           "Assay_Result_Type", "Peformance_Statistics_Source", "Assay_Antigen_Source"]):
