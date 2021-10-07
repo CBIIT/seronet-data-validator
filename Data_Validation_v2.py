@@ -7,6 +7,10 @@ import os
 import pandas as pd
 from colorama import init
 from termcolor import colored
+import time
+from pandas_aws import s3 as pd_s3
+import boto3
+import aws_creds_prod
 
 import File_Submission_Object
 from Validation_Rules import Validation_Rules
@@ -14,6 +18,7 @@ from Validation_Rules import check_ID_Cross_Sheet
 from Validation_Rules import compare_tests
 
 import get_assay_data_from_box
+from get_data_to_check import get_summary_file
 
 import warnings
 warnings.simplefilter("ignore")
@@ -24,6 +29,11 @@ validation_date = datetime.datetime.now(tz=eastern).strftime("%Y-%m-%d")
 
 user_dir = os.getcwd()
 box_dir = "C:" + file_sep + "Users" + file_sep + os.getlogin() + file_sep + "Box"
+
+s3_client = boto3.client('s3', aws_access_key_id=aws_creds_prod.aws_access_id, aws_secret_access_key=aws_creds_prod.aws_secret_key,
+                         region_name='us-east-1')
+s3_resource = boto3.resource('s3', aws_access_key_id=aws_creds_prod.aws_access_id, aws_secret_access_key=aws_creds_prod.aws_secret_key,
+                             region_name='us-east-1')
 
 
 def get_box_data(box_dir, box_path):
@@ -45,26 +55,13 @@ Support_Files = templates + cbc_codes
 
 def Data_Validation_Main():
     init()
+    tic = time.perf_counter()
     root_dir = "C:\\Seronet_Data_Validation"
     passing_msg = ("File is a valid Zipfile. No errors were found in submission. " +
                    "Files are good to proceed to Data Validation")
 #############################################################################################
     summary_path = root_dir + file_sep + "Summary_of_all_Submissions.xlsx"
-    summary_file = []
-    if os.path.exists(summary_path):
-        xls = pd.ExcelFile(summary_path, engine='openpyxl')
-        for iterZ in xls.sheet_names:
-            if len(summary_file) == 0:
-                summary_file = pd.read_excel(summary_path, sheet_name=iterZ, engine='openpyxl')
-            else:
-                new_file = pd.read_excel(summary_path, sheet_name=iterZ, engine='openpyxl')
-                summary_file = pd.concat([summary_file, new_file])
-        summary_file.reset_index(inplace=True)
-        summary_file.drop(["index"], inplace=True, axis=1)
-    else:
-        summary_file = pd.DataFrame(columns=["Submission_Status", "Date_Of_Last_Status", "Folder_Location",
-                                             "CBC_Num", "Date_Timestamp", "Submission_Name",
-                                             "Validation_Status", "JIRA_Ticket", "Ticket_Status"])
+    summary_file = get_summary_file(os, pd, root_dir, file_sep, s3_client, summary_path)
 #############################################################################################
     if "Submission_Status" not in summary_file.columns:
         print("Excel file Exists but is empty, will cause errors during validation")
@@ -90,6 +87,29 @@ def Data_Validation_Main():
     summary_file = move_folder_to_uploaded(summary_file, root_dir)
     CBC_Folders = get_subfolder(root_dir, "Files_To_Validate")
 
+############################################################################################
+# validate serology confirm data
+    bucket = "nci-cbiit-seronet-submissions-passed"
+    key = "serology/serology_confirmation_test_result/"
+    file_name = "serology_confirmation_test_results.csv"
+    serology_code = 12
+    resp = s3_client.list_objects_v2(Bucket=bucket, Prefix=key)
+    for curr_serology in resp["Contents"]:
+        if ("Test_Results_Passed" in curr_serology["Key"]) or ("Test_Results_Failed" in curr_serology["Key"]):
+            pass
+        elif ".xlsx" in curr_serology["Key"]:
+            current_sub_object = File_Submission_Object.Submission_Object("Serology")
+            serology_data = pd_s3.get_df_from_keys(s3_client, bucket, prefix=curr_serology["Key"], suffix="xlsx",
+                                                   format="xlsx", na_filter=False, output_type="pandas")
+
+            data_table, drop_list = current_sub_object.validate_serology(file_name, serology_data,
+                                                                         assay_data, assay_target, serology_code)
+            current_sub_object = Validation_Rules(re, datetime, current_sub_object, data_table,
+                                                  file_name, [serology_code], drop_list)
+            error_list = current_sub_object.Error_list
+            if len(error_list) == 0:
+                print("\n## Serology File has No Errors, Submission is Valid\n")
+
     if len(CBC_Folders) == 0:
         print("\nThe Files_To_Validate Folder is empty, no Submissions Downloaded to Process\n")
 #############################################################################################
@@ -102,6 +122,13 @@ def Data_Validation_Main():
         CBC_Folders = [CBC_Folders[i] for i in sort_list]
 
     all_res = []
+    time_list = []
+    cbc_name_list = []
+    file_name_list = []
+    date_name_list = []
+    toc = time.perf_counter()
+    print(f"Folder Creation, and summary file in {toc - tic:0.4f} seconds")
+
     for iterT in CBC_Folders:
         date_folders = os.listdir(iterT)
         cbc_name = pathlib.PurePath(iterT).name
@@ -118,15 +145,24 @@ def Data_Validation_Main():
             rem_data = 0
             rem_data = check_test_data(Date_path)
             if rem_data == 1:  # if submission is a test no need to check it
+                date_name_list.append(iterD)
+                file_name_list.append("File not run")
+                time_list.append(f"{0.0000} seconds")
                 continue
 
             file_count = 0
             for iterS in Submissions_Names:
+                cbc_name_list.append(res[0])
+                date_name_list.append(iterD)
+                file_name_list.append(iterS)
+                tic = time.perf_counter()
                 file_str = (Date_path + file_sep + iterS)
                 if os.path.isfile(file_str):
                     os.remove(file_str)
                     file_str = file_str.replace((root_dir + file_sep + "Files_To_Validate"), "")
                     print(colored("\n##    File Validation has NOT been run for " + file_str + "    ##", 'yellow'))
+                    toc = time.perf_counter()
+                    time_list.append(f"{toc - tic:0.4f} seconds")
                     continue
                 current_sub_object = File_Submission_Object.Submission_Object(iterS[15:])
                 curr_dict = populate_dict(validation_date, cbc_name, iterD, current_sub_object)
@@ -161,6 +197,9 @@ def Data_Validation_Main():
                 list_of_folders = os.listdir(Date_path + file_sep + iterS)
                 result_message = get_result_message(list_of_folders, Date_path, orgional_path, iterS)
                 if (result_message == ''):
+                    summary_file = summary_file.append(curr_dict, ignore_index=True)
+                    toc = time.perf_counter()
+                    time_list.append(f"{toc - tic:0.4f} seconds")
                     continue
                 if result_message != passing_msg:
                     print("Submitted File FAILED the File-Validation Process")
@@ -169,8 +208,10 @@ def Data_Validation_Main():
                     move_file_and_update(orgional_path, root_dir, current_sub_object, curr_dict,
                                          "01_Failed_File_Validation", error_str)
                     curr_dict["Validation_Status"] = result_message
+                    toc = time.perf_counter()
+                    time_list.append(f"{toc - tic:0.4f} seconds")
                     summary_file = summary_file.append(curr_dict, ignore_index=True)
-                    summary_file.drop_duplicates(["CBC_Num", "Date_Timestamp", "Submission_Name"], keep='last', inplace=True)
+#                    summary_file.drop_duplicates(["CBC_Num", "Date_Timestamp", "Submission_Name"], keep='last', inplace=True)
                     continue
 #############################################################################################################################
                 list_of_files = []
@@ -198,6 +239,8 @@ def Data_Validation_Main():
                     move_file_and_update(orgional_path, root_dir, current_sub_object, curr_dict,
                                          "03_Data_Validation_Column_Errors", error_str)
                     summary_file = summary_file.append(curr_dict, ignore_index=True)
+                    toc = time.perf_counter()
+                    time_list.append(f"{toc - tic:0.4f} seconds")
                     continue
                 valid_cbc_ids = str(current_sub_object.CBC_ID)
                 for file_name in current_sub_object.Data_Object_Table:
@@ -240,16 +283,21 @@ def Data_Validation_Main():
                     display_error_line(err)
                 print("Validation for this File is complete")
                 summary_file = summary_file.append(curr_dict, ignore_index=True)
-                summary_file.drop_duplicates(["CBC_Num", "Date_Timestamp", "Submission_Name"], keep='last', inplace=True)
+#                summary_file.drop_duplicates(["CBC_Num", "Date_Timestamp", "Submission_Name"], keep='last', inplace=True)
+
+                toc = time.perf_counter()
+                time_list.append(f"{toc - tic:0.4f} seconds")
 
             if file_count > 0:
                 res[1] = res[1] + 1
                 res[2] = res[2] + file_count
             if len(os.listdir(Date_path)) == 0:
                 shutil.rmtree(Date_path)
+
         print(colored("\nEnd of Current CBC Folder (" + cbc_name + "), moving to next CBC Folder", 'blue'))
         all_res.append(res)
         clear_dir(iterT)
+
     print("\nALl folders have been checked")
     print("Closing Validation Program")
 

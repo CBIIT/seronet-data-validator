@@ -62,6 +62,7 @@ class Submission_Object:
         self.Data_Object_Table = {}
         self.Part_List = []
         self.Bio_List = []
+        self.Rule_Count = 0
         self.Column_error_count = pd.DataFrame(columns=["Message_Type", "CSV_Sheet_Name", "Column_Name", "Error_Message"])
         self.Curr_col_errors = pd.DataFrame(columns=["Message_Type", "CSV_Sheet_Name", "Column_Name", "Error_Message"])
         self.Error_list = pd.DataFrame(columns=["Message_Type", "CSV_Sheet_Name", "Row_Index", "Column_Name",
@@ -283,8 +284,10 @@ class Submission_Object:
         self.update_error_table("Not Validated", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
     def check_assay_special(self, data_table, header_name, file_name, sheet_name, re):
+        self.Rule_Count = self.Rule_Count + 1
         assay_table = self.Data_Object_Table[file_name]["Data_Table"]
         assay_table.rename(columns={"Target_Organism": "Assay_Target_Organism"}, inplace=True)
+        data_table.replace('EBV Nuclear antigen � 1', 'EBV Nuclear antigen - 1', inplace=True)
 
         curr_assay = assay_table[assay_table["Assay_ID"].apply(lambda x: re.compile('^' + str(self.CBC_ID)
                                                                                     + '_[0-9]{3}').match(str(x)) is not None)]
@@ -294,6 +297,7 @@ class Submission_Object:
         self.update_error_table("Error", error_data, sheet_name, header_name, error_msg, keep_blank=False)
 
     def check_id_field(self, sheet_name, data_table, re, field_name, pattern_str, cbc_id, pattern_error):
+        self.Rule_Count = self.Rule_Count + 1
         if field_name in ["Biorepository_ID", "Parent_Biorepository__ID", "Subaliquot_ID"]:
             single_invalid = data_table[data_table[field_name].apply(
                 lambda x: re.compile(pattern_str).match(str(x)) is None)]
@@ -329,12 +333,14 @@ class Submission_Object:
         self.sort_and_drop(field_name)
 
     def check_if_cbc_num(self, sheet_name, field_name, data_table, cbc_list):
+        self.Rule_Count = self.Rule_Count + 1
         wrong_code = data_table[data_table[field_name].apply(lambda x: x not in cbc_list)]
         for i in wrong_code.index:
             error_msg = "Lab ID is not valid, please check against list of approved ID values"
             self.add_error_values("Error", sheet_name, i+2, field_name, wrong_code[field_name][i], error_msg)
 
     def check_for_dup_ids(self, sheet_name, field_name):
+        self.Rule_Count = self.Rule_Count + 1
         if sheet_name in self.Data_Object_Table:
             data_table = self.Data_Object_Table[sheet_name]['Data_Table']
             data_table = data_table[data_table[field_name].apply(lambda x: x not in ["N/A"])]
@@ -345,17 +351,20 @@ class Submission_Object:
                 self.add_error_values("Error", sheet_name, -3, field_name, i, error_msg)
 
     def check_if_substr(self, data_table, id_1, id_2, file_name, header_name):
+        self.Rule_Count = self.Rule_Count + 1
         id_compare = data_table[data_table.apply(lambda x: x[id_1] not in x[id_2], axis=1)]
         Error_Message = id_1 + " is not a substring of " + id_2 + ".  Data is not Valid, please check data"
         self.update_error_table("Error", id_compare, file_name, header_name, Error_Message)
 
     def check_if_substr_2(self, data_table, id_1, id_2, file_name, header_name):
+        self.Rule_Count = self.Rule_Count + 1
         id_compare = data_table[data_table.apply(lambda x: str(x[id_1])[0:6] not in str(x[id_2])[0:6], axis=1)]
         Error_Message = id_1 + " is not a substring of " + id_2 + ".  Data is not Valid, please check data"
         id_compare = id_compare.query("Subaliquot_ID not in ['N/A']")
         self.update_error_table("Error", id_compare, file_name, header_name, Error_Message)
 
     def check_in_list(self, sheet_name, data_table, header_name, depend_col, depend_val, list_values):
+        self.Rule_Count = self.Rule_Count + 1
         data_table, error_str = self.check_for_dependancy(data_table, depend_col, depend_val, sheet_name, header_name)
         if len(data_table) > 0:
             error_msg = error_str + "Value must be one of the following: " + str(list_values)
@@ -373,6 +382,7 @@ class Submission_Object:
             self.update_error_table("Error", error_data, sheet_name, header_name, error_msg)
 
     def check_interpertation(self, sheet_name, data_table, header_name, list_values):
+        self.Rule_Count = self.Rule_Count + 1
         error_msg = "Value must contain of the following options: " + str(list_values)
         curr_data = data_table[header_name]
         row_index = []
@@ -385,6 +395,7 @@ class Submission_Object:
 
     def check_date(self, datetime, sheet_name, data_table, header_name, depend_col, depend_val,
                    na_allowed, time_check, lower_lim=0, upper_lim=24):
+        self.Rule_Count = self.Rule_Count + 1
         data_table, error_str = self.check_for_dependancy(data_table, depend_col, depend_val, sheet_name, header_name)
         if len(data_table) == 0:
             return{}
@@ -418,6 +429,7 @@ class Submission_Object:
 
     def check_if_number(self, sheet_name, data_table, header_name, depend_col, depend_val, na_allowed,
                         lower_lim, upper_lim, num_type):
+        self.Rule_Count = self.Rule_Count + 1
         data_table, error_str = self.check_for_dependancy(data_table, depend_col, depend_val, sheet_name, header_name)
 
         if len(data_table) == 0:
@@ -455,6 +467,7 @@ class Submission_Object:
 
     def check_duration_rules(self, file_name, data_table, header_name, depend_col, depend_val,
                              max_date, curr_year, Duration_Rules):
+        self.Rule_Count = self.Rule_Count + 1
         if (header_name in [Duration_Rules[0]]):
             self.check_if_number(file_name, data_table, header_name, depend_col, depend_val, True, 0, 100000, "int")
             self.compare_dates_to_curr(file_name, data_table, header_name,
@@ -472,6 +485,7 @@ class Submission_Object:
             self.unknow_number_dependancy(file_name, header_name, data_table, Duration_Rules[0], ["N/A"])
 
     def compare_dates_to_curr(self, sheet_name, data_table, header_name, unit_name, year_name, curr_date):
+        self.Rule_Count = self.Rule_Count + 1
         curr_year = curr_date.year
         curr_month = curr_date.month
         test_data = data_table[data_table[year_name].apply(lambda x: isinstance(x, (int, float)))]
@@ -500,6 +514,7 @@ class Submission_Object:
             self.add_error_values("Error", sheet_name, iterZ+2, header_name, error_val, error_msg)
 
     def compare_total_to_live(self, sheet_name, data_table, header_name):
+        self.Rule_Count = self.Rule_Count + 1
         second_col = header_name.replace('Total_Cells', 'Live_Cells')
         data_table, error_str = self.check_for_dependancy(data_table, header_name, "Is A Number", sheet_name, header_name)
         data_table, error_str = self.check_for_dependancy(data_table, second_col, "Is A Number", sheet_name, header_name)
@@ -511,6 +526,7 @@ class Submission_Object:
             self.add_error_values("Error", sheet_name, iterZ+2, header_name, error_data.loc[iterZ][header_name], error_msg)
 
     def compare_viability(self, sheet_name, data_table, header_name):
+        self.Rule_Count = self.Rule_Count + 1
         live_col = header_name.replace('Viability', 'Live_Cells')
         total_col = header_name.replace('Viability', 'Total_Cells')
         data_table, error_str = self.check_for_dependancy(data_table, header_name, "Is A Number", sheet_name, header_name)
@@ -533,6 +549,7 @@ class Submission_Object:
             self.add_error_values("Error", sheet_name, iterZ+2, header_name, error_data.loc[iterZ][header_name], error_msg)
 
     def check_if_string(self, sheet_name, data_table, header_name, depend_col, depend_val, na_allowed):
+        self.Rule_Count = self.Rule_Count + 1
         data_table, error_str = self.check_for_dependancy(data_table, depend_col, depend_val, sheet_name, header_name)
         if len(data_table) > 0:
             if depend_col == "None":
@@ -554,6 +571,7 @@ class Submission_Object:
                 self.update_error_table("Error", error_data, sheet_name, header_name, error_msg)
 
     def check_icd10(self, sheet_name, data_table, header_name):
+        self.Rule_Count = self.Rule_Count + 1
         number_data = data_table[data_table[header_name].apply(lambda x: not isinstance(x, str))]
         data_table = data_table[data_table[header_name].apply(lambda x: isinstance(x, str))]
         error_data = data_table[data_table[header_name].apply(lambda x: not (icd10.exists(x) or x in ["N/A"]))]
@@ -626,6 +644,7 @@ class Submission_Object:
         self.All_bio_ids = pd.DataFrame(self.All_bio_ids, columns=["Biospecimen_ID"])
 
     def get_passing_part_ids(self):
+        self.Rule_Count = self.Rule_Count + 1
         if (int(self.Submit_Participant_IDs) != len(self.All_part_ids)):
             error_msg = "After validation only " + str(len(self.All_part_ids)) + " Participat IDS are valid"
             self.add_error_values("Error", "submission.csv", -5, "submit_Participant_IDs",
@@ -638,6 +657,7 @@ class Submission_Object:
             error_msg = "ID match, do not do anything"
 
     def make_error_queries(self, all_merge, field_name):
+        self.Rule_Count = self.Rule_Count + 1
         if field_name == "Biospecimen":
             col_name = "Biospecimen_ID"
         if field_name == "Demographic":
@@ -654,11 +674,13 @@ class Submission_Object:
                                                     "['Positive','Negative']"), col_name)
 
     def part_ids_errors(self, all_merge, error_msg, querry_str, test_field):
+        self.Rule_Count = self.Rule_Count + 1
         error_data = all_merge.query(querry_str.format(test_field))
         error_data.drop_duplicates("Research_Participant_ID", inplace=True)
         self.update_error_table("Error", error_data, "Cross_Participant_ID.csv", "Research_Participant_ID", error_msg)
 
     def get_cross_sheet_ID(self, re, field_name, pattern_str, sheet_name):
+        self.Rule_Count = self.Rule_Count + 1
         if field_name == "Biospecimen_ID":
             file_list = self.Bio_List
         elif field_name == "Research_Participant_ID":
@@ -769,3 +791,11 @@ class Submission_Object:
             curr_name = curr_name.replace(".xlsx", ".csv")
             curr_table.to_csv(Error_path + curr_name, index=False)
             print(colored(iterU + " has " + str(len(curr_table)) + " Errors", 'red'))
+
+    def validate_serology(self, file_name, serology_data, assay_data, assay_target, serology_id):
+        self.update_object(serology_data, file_name)
+        self.update_object(assay_data, "assay.csv")
+        self.update_object(assay_target, "assay_target.csv")
+        data_table, drop_list = self.correct_var_types(file_name)
+        self.CBC_ID = serology_id
+        return data_table, drop_list

@@ -109,7 +109,8 @@ def get_curr_tests(curr_part, prior_stat, target_virus):
            (("no" in iterZ) and ("reaction" in iterZ)) or
            (("non" in iterZ) and ("reactive" in iterZ))):
             neg_count = neg_count + 1
-        elif (("positive" in iterZ) or (("no" not in iterZ) and ("reaction" in iterZ)) or
+        elif (("positive" in iterZ) or
+              (("no" not in iterZ) and ("reaction" in iterZ)) or
               (("non" not in iterZ) and ("reactive" in iterZ))):
             pos_count = pos_count + 1
         else:
@@ -159,7 +160,7 @@ def check_ID_validation(header_name, current_object, file_name, data_table, re, 
     elif header_name in ["Subaliquot_ID"]:
         pattern_str = 'LP[0-9]{5}[ ]{1}1[0-9]{3}$'
         current_object.check_id_field(file_name, data_table, re, header_name, pattern_str, valid_cbc_ids, "LPXXXXXX 1XXX")
-        current_object.check_for_dup_ids(file_name, header_name)
+#        current_object.check_for_dup_ids(file_name, header_name)
         if ("Biorepository_ID" in data_table.columns):
             current_object.check_if_substr_2(data_table, "Biorepository_ID", "Subaliquot_ID", file_name, header_name)
         elif ("Parent_Biorepository_ID" in data_table.columns):
