@@ -1,14 +1,10 @@
-import os
-import pandas as pd
-import re
-import warnings
-warnings.simplefilter("ignore")
-
+from import_loader import *
 
 def get_assay_data():
     file_sep = os.path.sep
     box_dir = "C:" + file_sep + "Users" + file_sep + os.getlogin() + file_sep + "Box"
     assay_dir = box_dir + file_sep + "CBC_Folders"
+#    assay_dir = "C:\\Data_Validation_CBC\Assay_Data_Folder"
     assay_paths = []
 
     path_dir = pd.DataFrame(columns=["Dir_Path", "File_Name", "Date_Created", "Date_Modified"])
@@ -36,7 +32,8 @@ def get_assay_data():
         assay_file = curr_folder[curr_folder["File_Name"].apply(lambda x: "assay_qc" in x)]
         all_qc_data = populate_df(all_qc_data, assay_file)
 
-        assay_file = curr_folder[curr_folder["File_Name"].apply(lambda x: "assay_target_antigen" in x)]
+        assay_file = curr_folder[curr_folder["File_Name"].apply(lambda x: "assay_target_antigen" in x or
+                                                                "assay_target" in x)]
         all_target_data = populate_df(all_target_data, assay_file)
 
         assay_file = curr_folder[curr_folder["File_Name"].apply(lambda x: "Assay_Target_Organism_Conversion.xlsx" in x)]
