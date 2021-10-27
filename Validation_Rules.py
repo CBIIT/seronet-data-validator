@@ -257,7 +257,7 @@ def check_prior_clinical(header_name, current_object, data_table, file_name, dat
 def check_demographic(header_name, current_object, data_table, file_name, datetime, curr_year, max_date,
                       Rule_Found, index, Required_column="Yes"):
     if (header_name in ['Age']):
-        current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 1, 200, "int")
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 1, 100, "float")
     elif (header_name in ['Race', 'Ethnicity', 'Gender']):
         if (header_name in ['Race']):
             list_values = ['White', 'American Indian or Alaska Native', 'Black or African American', 'Asian',
@@ -378,7 +378,7 @@ def check_biospecimen(header_name, current_object, data_table, file_name, dateti
 def check_processing_rules(header_name, current_object, data_table, file_name, datetime, max_date,
                            Rule_Found, index, Required_column="Yes"):
     if (header_name in ["Aliquot_Volume"]):
-        current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 1e9, "float")
+        current_object.check_if_number(file_name, data_table, header_name, "None", "None", True, 0, 5, "float")
     elif (header_name in ["Aliquot_Concentration (cells/mL)"]):
         current_object.check_if_number(file_name, data_table, header_name, "Biospecimen_Type", ["PBMC"],
                                        True, 0, 1e9, "float")
@@ -429,7 +429,7 @@ def check_confimation_rules(header_name, current_object, data_table, file_name, 
     elif (header_name in ["Assay_Target_Sub_Region", "Measurand_Antibody", "Derived_Result"]):
         current_object.check_if_string(file_name, data_table, header_name, "None", "None", True)
     elif (header_name in ["Interpretation"]):
-        list_values = ['positive', 'negative', 'reactive', 'reaction']
+        list_values = ['positive', 'negative', 'reactive', 'reaction', 'equivocal']
         current_object.check_interpertation(file_name, data_table, header_name, list_values)
     elif (header_name in ["Assay_Replicate", "Sample_Dilution"]):
         current_object.check_if_number(file_name, data_table, header_name, "None", "None", False, 0, 200, "int")

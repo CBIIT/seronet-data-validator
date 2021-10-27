@@ -62,6 +62,9 @@ class Submission_Object:
         self.Data_Object_Table = {}
         self.Part_List = []
         self.Bio_List = []
+
+        self.part_list = []
+        self.bio_list = []
         self.Rule_Count = 0
         self.Column_error_count = pd.DataFrame(columns=["Message_Type", "CSV_Sheet_Name", "Column_Name", "Error_Message"])
         self.Curr_col_errors = pd.DataFrame(columns=["Message_Type", "CSV_Sheet_Name", "Column_Name", "Error_Message"])
@@ -634,6 +637,11 @@ class Submission_Object:
         self.All_part_ids = list(set(all_part_ids))
         self.All_bio_ids = list(set(all_bio_ids))
 
+        if len(self.part_list) == 0:
+            self.All_part_ids = self.part_list
+        if len(self.bio_list) == 0:
+            self.All_bio_ids = self.bio_list
+
         self.All_part_ids = [i for i in self.All_part_ids if (re.compile('^' + str(self.CBC_ID) +
                                                                          '[_]{1}[0-9]{6}$').match(i) is not None)]
         self.All_bio_ids = [i for i in self.All_bio_ids if (re.compile('^' + str(self.CBC_ID)
@@ -645,6 +653,7 @@ class Submission_Object:
 
     def get_passing_part_ids(self):
         self.Rule_Count = self.Rule_Count + 1
+
         if (int(self.Submit_Participant_IDs) != len(self.All_part_ids)):
             error_msg = "After validation only " + str(len(self.All_part_ids)) + " Participat IDS are valid"
             self.add_error_values("Error", "submission.csv", -5, "submit_Participant_IDs",
@@ -799,3 +808,60 @@ class Submission_Object:
         data_table, drop_list = self.correct_var_types(file_name)
         self.CBC_ID = serology_id
         return data_table, drop_list
+
+    def populate_missing_keys(self, sql_column_df, engine, conn):
+        part_str = "'" + "', '".join(self.part_list) + "'"
+        bio_str = "'" + "', '".join(self.bio_list) + "'"
+        aliquot_str = "'" + "', '".join(self.aliquot_list) + "'"
+
+        if "demographic.csv" not in self.Data_Object_Table and len(self.part_list) > 0:
+            query_str = ("SELECT Research_Participant_ID, Age FROM Participant " +
+                         f"WHERE Research_Participant_ID IN ({part_str});")
+            self.add_new_dict_data("demographic.csv", query_str, pd, conn)
+        if "prior_clinical_test.csv" not in self.Data_Object_Table and len(self.part_list) > 0:
+            query_str = ("SELECT Research_Participant_ID, Test_Result FROM Participant_Prior_SARS_CoV2_PCR " +
+                         f"WHERE Research_Participant_ID IN ({part_str});")
+            self.add_new_dict_data("prior_clinical_test.csv", query_str, pd, conn)
+        if "confirmatory_clinical_test.csv" not in self.Data_Object_Table and len(self.part_list) > 0:
+            query_str = ("SELECT Research_Participant_ID, Assay_ID, Assay_Target, Assay_Target_Organism, Interpretation " +
+                         f"FROM Confirmatory_Clinical_Test WHERE Research_Participant_ID IN ({part_str});")
+            self.add_new_dict_data("confirmatory_clinical_test.csv", query_str, pd, conn)
+
+        if "biospecimen.csv" not in self.Data_Object_Table:
+            if len(self.part_list) > 0:
+                query_str = ("SELECT Research_Participant_ID, Biospecimen_ID, Biospecimen_Type FROM Biospecimen " +
+                             f"WHERE Research_Participant_ID IN ({part_str});")
+                self.add_new_dict_data("biospecimen.csv", query_str, pd, conn)
+            elif len(self.bio_list) > 0:
+                query_str = ("SELECT Research_Participant_ID, Biospecimen_ID, Biospecimen_Type FROM Biospecimen " +
+                             f"WHERE Biospecimen_ID IN ({bio_str});")
+                self.add_new_dict_data("biospecimen.csv", query_str, pd, conn)
+        if "equipment.csv" not in self.Data_Object_Table and len(self.bio_list) > 0:
+            self.join_tables("Equipment", "Biospecimen_Equipment", "Equipment_Index", "Biospecimen_Equipment_ID",
+                             "equipment.csv", pd, conn, col_list=["Biospecimen_ID", "Equipment_ID"])
+        if "reagent.csv" not in self.Data_Object_Table and len(self.bio_list) > 0:
+            self.join_tables("Reagent", "Reagent_Biospecimen", "Reagent_Name_Index", "Reagent_Biospecimen_ID",
+                             "reagent.csv", pd, conn, col_list=["Biospecimen_ID", "Reagent_Name"])
+        if "consumable.csv" not in self.Data_Object_Table and len(self.bio_list) > 0:
+            self.join_tables("Consumable", "Consumable_Biospecimen", "Consumable_Name_Index", "Consumable_Biospecimen_ID",
+                             "consumable.csv", pd, conn, col_list=["Biospecimen_ID", "Consumable_Name"])
+
+        if "aliquot.csv" not in self.Data_Object_Table:
+            if len(self.bio_list) > 0:
+                query_str = (f"SELECT Aliquot_ID, Biospecimen_ID FROM .Aliquot WHERE Biospecimen_ID IN ({bio_str});")
+                self.add_new_dict_data("biospecimen.csv", query_str, pd, conn)
+            elif len(self.aliquot_list) > 0:
+                query_str = (f"SELECT Aliquot_ID, Biospecimen_ID FROM .Aliquot WHERE Aliquot_ID IN ({aliquot_str});")
+                self.add_new_dict_data("biospecimen.csv", query_str, pd, conn)
+
+    def join_tables(self, table_1, table_2, index_1, index_2, file_name, query_str, pd, conn, **kwargs):
+        query_str = f"SELECT * FROM {table_1} as e INNER JOIN {table_2} as b ON e.{index_1} = b.{index_2};"
+        self.add_new_dict_data(file_name, query_str, pd, conn)
+
+    def add_new_dict_data(self, file_name, query_str, pd, conn, **kwargs):
+        self.Data_Object_Table[file_name] = {"Data_Table": []}
+        curr_table = pd.read_sql((query_str), conn)
+        curr_table.rename(columns={"Test_Result": "SARS_CoV_2_PCR_Test_Result"}, inplace=True)
+        if "col_list" in kwargs:
+            curr_table == curr_table[kwargs["col_list"]]
+        self.Data_Object_Table[file_name]["Data_Table"] = curr_table
